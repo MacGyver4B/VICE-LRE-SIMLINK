@@ -1,0 +1,386 @@
+/*
+ * simlink - Implementierung (POSIX-Shared-Memory, C11-Atomics)
+ */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include "simlink.h"
+
+#include <fcntl.h>
+#include <sched.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#define SIMLINK_MAGIC 0x4B4E4C53u /* "SLNK" */
+
+/* Ein Ringeintrag: ab time_ps gilt state/pulses.
+   state  = pull | data << 8
+   pulses = Zaehler PSTB | PACK << 8 | SRQ << 16 (je 8 Bit, laufen ueber) */
+typedef struct {
+    uint64_t time_ps;
+    uint32_t state;
+    uint32_t pulses;
+} sl_entry_t;
+
+typedef struct {
+    _Atomic uint64_t time_ps;   /* Fortschritt */
+    _Atomic uint32_t head;      /* Anzahl geschriebener Eintraege (laeuft weiter) */
+    _Atomic uint32_t flags;     /* SL_F_*, aktuell */
+    sl_entry_t ring[SIMLINK_RING];
+} sl_part_t;
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    uint8_t  bus;
+    uint8_t  line_mask;
+    uint8_t  type[SIMLINK_MAX_PARTS];
+    uint8_t  pad[6];
+    _Atomic uint64_t grant_ps;       /* Zeit des Taktgebers */
+    _Atomic uint32_t slots;          /* Belegung der Teilnehmerplaetze */
+    _Atomic uint32_t pad2;
+    sl_part_t part[SIMLINK_MAX_PARTS];
+} sl_shm_t;
+
+struct simlink_s {
+    sl_shm_t *shm;
+    char      name[64];
+    uint32_t  cur_state[SIMLINK_MAX_PARTS];   /* eigener Stand (nur eigener Slot genutzt) */
+    uint32_t  cur_pulses[SIMLINK_MAX_PARTS];
+    uint32_t  rd_pulses[SIMLINK_MAX_PARTS];   /* beim letzten Lesen gesehene Zaehler der anderen */
+    uint32_t  seen[SIMLINK_MAX_PARTS];        /* von simlink_pulses() schon gemeldet */
+    uint64_t  waits;
+};
+
+#define ST_PULL(s)  ((uint8_t)((s) & 0xff))
+#define ST_DATA(s)  ((uint8_t)(((s) >> 8) & 0xff))
+#define ST_MAKE(p, d) ((uint32_t)(p) | ((uint32_t)(d) << 8))
+
+static void spin(unsigned *n)
+{
+    if (++*n > 200) {
+        sched_yield();
+    }
+}
+
+simlink_t *simlink_open(const char *name, int bus, int create, uint8_t line_mask)
+{
+    char path[64];
+    int fd;
+    simlink_t *sl;
+    sl_shm_t *shm;
+
+    snprintf(path, sizeof(path), "/simlink-%.40s", name);
+    fd = shm_open(path, O_RDWR | (create ? O_CREAT : 0), 0600);
+    if (fd < 0) {
+        return NULL;
+    }
+    if (create && ftruncate(fd, sizeof(sl_shm_t)) < 0) {
+        close(fd);
+        return NULL;
+    }
+    shm = mmap(NULL, sizeof(sl_shm_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    close(fd);
+    if (shm == MAP_FAILED) {
+        return NULL;
+    }
+    if (create) {
+        memset(shm, 0, sizeof(*shm));
+        shm->version = SIMLINK_VERSION;
+        shm->bus = (uint8_t)bus;
+        shm->line_mask = line_mask;
+        atomic_thread_fence(memory_order_release);
+        shm->magic = SIMLINK_MAGIC;
+    } else if (shm->magic != SIMLINK_MAGIC || shm->version != SIMLINK_VERSION
+               || shm->bus != (uint8_t)bus) {
+        munmap(shm, sizeof(*shm));
+        return NULL;
+    }
+    sl = calloc(1, sizeof(*sl));
+    sl->shm = shm;
+    memcpy(sl->name, path, sizeof(path));
+    return sl;
+}
+
+void simlink_close(simlink_t *sl, int unlink_bus)
+{
+    if (!sl) {
+        return;
+    }
+    munmap(sl->shm, sizeof(*sl->shm));
+    if (unlink_bus) {
+        shm_unlink(sl->name);
+    }
+    free(sl);
+}
+
+static int active(sl_part_t *p)
+{
+    return atomic_load_explicit(&p->flags, memory_order_acquire) & SL_F_ACTIVE;
+}
+
+int simlink_attach(simlink_t *sl, uint8_t type, int clockmaster)
+{
+    sl_shm_t *shm = sl->shm;
+    sl_part_t *p;
+    uint32_t old, want;
+    uint64_t start = UINT64_MAX;
+    int slot, i;
+
+    do {
+        old = atomic_load(&shm->slots);
+        for (slot = 0; slot < SIMLINK_MAX_PARTS; slot++) {
+            if (!(old & (1u << slot))) {
+                break;
+            }
+        }
+        if (slot == SIMLINK_MAX_PARTS) {
+            return -1;
+        }
+        want = old | (1u << slot);
+    } while (!atomic_compare_exchange_weak(&shm->slots, &old, want));
+
+    /* Neueinsteiger beginnt beim langsamsten aktiven Teilnehmer */
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        if (i != slot && active(&shm->part[i])) {
+            uint64_t t = atomic_load(&shm->part[i].time_ps);
+            if (t < start) {
+                start = t;
+            }
+        }
+    }
+    if (start == UINT64_MAX) {
+        start = 0;
+    }
+    p = &shm->part[slot];
+    shm->type[slot] = type;
+    p->ring[0].time_ps = start;
+    p->ring[0].state = 0;
+    p->ring[0].pulses = 0;
+    atomic_store(&p->head, 1);
+    atomic_store(&p->time_ps, start);
+    sl->cur_state[slot] = 0;
+    sl->cur_pulses[slot] = 0;
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        sl->rd_pulses[i] = sl->seen[i] = 0;
+    }
+    atomic_store_explicit(&p->flags, SL_F_ACTIVE | (clockmaster ? SL_F_CLOCKMASTER : 0),
+                          memory_order_release);
+    return slot;
+}
+
+void simlink_detach(simlink_t *sl, int slot)
+{
+    sl_shm_t *shm = sl->shm;
+    atomic_store(&shm->part[slot].flags, SL_F_DETACH);
+    atomic_fetch_and(&shm->slots, ~(1u << slot));
+}
+
+/* kleinste Fortschrittszeit der anderen aktiven Teilnehmer; *err bei ERROR */
+static uint64_t min_other(sl_shm_t *shm, int self, int *err)
+{
+    uint64_t m = UINT64_MAX;
+    int i;
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        sl_part_t *p = &shm->part[i];
+        uint32_t f;
+        uint64_t t;
+        if (i == self) {
+            continue;
+        }
+        f = atomic_load_explicit(&p->flags, memory_order_acquire);
+        if (!(f & SL_F_ACTIVE)) {
+            continue;
+        }
+        if (f & SL_F_ERROR) {
+            *err = 1;
+        }
+        t = atomic_load_explicit(&p->time_ps, memory_order_acquire);
+        if (t < m) {
+            m = t;
+        }
+    }
+    return m;
+}
+
+/* Neuen Ringeintrag anhaengen; wartet, falls der Ring voll ist, d. h. ein
+   langsamer Leser die aeltesten Eintraege noch braucht. */
+static void append(simlink_t *sl, int slot, uint64_t t)
+{
+    sl_shm_t *shm = sl->shm;
+    sl_part_t *p = &shm->part[slot];
+    uint32_t head = atomic_load_explicit(&p->head, memory_order_relaxed);
+    sl_entry_t *last = &p->ring[(head - 1) % SIMLINK_RING];
+    unsigned n = 0;
+
+    if (last->time_ps == t) {
+        /* gleiche Zeit: letzten Eintrag ueberschreiben. Sicher, weil Leser nur
+           Eintraege mit Zeit < ihrer Lesezeit nutzen und wir t noch nicht
+           als Fortschritt ueberschritten haben. */
+        last->state = sl->cur_state[slot];
+        last->pulses = sl->cur_pulses[slot];
+        atomic_thread_fence(memory_order_release);
+        return;
+    }
+    /* Platz pruefen: Eintrag head-RING wird ueberschrieben. Er darf weg, wenn
+       der naechstjuengere Eintrag (head-RING+1) schon vor dem Fortschritt aller
+       Leser liegt; dann braucht niemand mehr den aelteren. */
+    while (head >= SIMLINK_RING) {
+        int err = 0;
+        uint64_t m = min_other(shm, slot, &err);
+        if (m == UINT64_MAX || err
+            || p->ring[(head - SIMLINK_RING + 1) % SIMLINK_RING].time_ps < m) {
+            break;
+        }
+        atomic_store_explicit(&p->time_ps, t, memory_order_release);
+        spin(&n);
+    }
+    {
+        sl_entry_t *e = &p->ring[head % SIMLINK_RING];
+        e->time_ps = t;
+        e->state = sl->cur_state[slot];
+        e->pulses = sl->cur_pulses[slot];
+    }
+    atomic_store_explicit(&p->head, head + 1, memory_order_release);
+}
+
+void simlink_set(simlink_t *sl, int slot, uint64_t t_ps, uint8_t pull, uint8_t data)
+{
+    uint32_t st = ST_MAKE(pull, data);
+    if (st == sl->cur_state[slot]) {
+        return;
+    }
+    sl->cur_state[slot] = st;
+    append(sl, slot, t_ps);
+}
+
+void simlink_pulse(simlink_t *sl, int slot, uint64_t t_ps, int line)
+{
+    sl->cur_pulses[slot] += 1u << (8 * line);
+    append(sl, slot, t_ps);
+}
+
+int simlink_progress(simlink_t *sl, int slot, uint64_t t_ps)
+{
+    sl_shm_t *shm = sl->shm;
+    sl_part_t *p = &shm->part[slot];
+    int err = 0;
+    /* Fortschritt laeuft nur vorwaerts */
+    if (t_ps > atomic_load_explicit(&p->time_ps, memory_order_relaxed)) {
+        atomic_store_explicit(&p->time_ps, t_ps, memory_order_release);
+    }
+    if (atomic_load_explicit(&p->flags, memory_order_relaxed) & SL_F_CLOCKMASTER) {
+        atomic_store_explicit(&shm->grant_ps, t_ps, memory_order_release);
+    }
+    min_other(shm, slot, &err);
+    return err ? -1 : 0;
+}
+
+/* Zustand eines anderen Teilnehmers vor Zeitpunkt t (letzter Eintrag mit Zeit < t). */
+static sl_entry_t state_before(sl_part_t *p, uint64_t t)
+{
+    uint32_t head = atomic_load_explicit(&p->head, memory_order_acquire);
+    uint32_t i = head;
+    sl_entry_t e = p->ring[(head - 1) % SIMLINK_RING];
+    while (i > 0 && head - i < SIMLINK_RING) {
+        e = p->ring[(i - 1) % SIMLINK_RING];
+        if (e.time_ps < t) {
+            break;
+        }
+        i--;
+    }
+    return e;
+}
+
+static uint8_t read_impl(simlink_t *sl, int slot, uint64_t t_ps, uint8_t *data, int own)
+{
+    sl_shm_t *shm = sl->shm;
+    uint32_t pull = 0, d = 0;
+    unsigned n = 0;
+    int i, waited = 0;
+
+    if (own) {
+        pull = ST_PULL(sl->cur_state[slot]);
+        d = ST_DATA(sl->cur_state[slot]);
+    }
+    /* eigenen Fortschritt melden, dann warten, bis alle anderen t erreicht haben */
+    simlink_progress(sl, slot, t_ps);
+    for (;;) {
+        int err = 0;
+        if (min_other(shm, slot, &err) >= t_ps || err) {
+            break;
+        }
+        waited = 1;
+        spin(&n);
+    }
+    if (waited) {
+        sl->waits++;
+    }
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        sl_part_t *p = &shm->part[i];
+        sl_entry_t e;
+        if (i == slot || !active(p)) {
+            continue;
+        }
+        e = state_before(p, t_ps);
+        pull |= ST_PULL(e.state);
+        d |= ST_DATA(e.state);
+        sl->rd_pulses[i] = e.pulses;
+    }
+    if (data) {
+        *data = (uint8_t)d;
+    }
+    return (uint8_t)pull & shm->line_mask;
+}
+
+uint8_t simlink_read(simlink_t *sl, int slot, uint64_t t_ps, uint8_t *data)
+{
+    return read_impl(sl, slot, t_ps, data, 1);
+}
+
+uint8_t simlink_read_others(simlink_t *sl, int slot, uint64_t t_ps, uint8_t *data)
+{
+    return read_impl(sl, slot, t_ps, data, 0);
+}
+
+unsigned simlink_pulses(simlink_t *sl, int slot, int line)
+{
+    unsigned n = 0;
+    int i;
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        uint32_t now = sl->rd_pulses[i], old = sl->seen[i];
+        uint32_t mask = 0xffu << (8 * line);
+        if (i == slot) {
+            continue;
+        }
+        n += (uint8_t)(((now & mask) >> (8 * line)) - ((old & mask) >> (8 * line)));
+        sl->seen[i] = (old & ~mask) | (now & mask);
+    }
+    return n;
+}
+
+uint64_t simlink_waits(simlink_t *sl)
+{
+    return sl->waits;
+}
+
+uint64_t simlink_start_time(simlink_t *sl, int slot)
+{
+    return sl->shm->part[slot].ring[0].time_ps;
+}
+
+int simlink_others(simlink_t *sl, int slot)
+{
+    int i, n = 0;
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        if (i != slot && active(&sl->shm->part[i])) {
+            n++;
+        }
+    }
+    return n;
+}

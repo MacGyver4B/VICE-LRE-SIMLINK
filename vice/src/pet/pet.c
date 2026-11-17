@@ -643,6 +643,13 @@ void machine_setup_context(void)
     machine_printer_setup_context(&machine_context);
 }
 
+/* simlink: externer Teilnehmer zieht SRQ (am PET an PIA2 CB1) */
+static void pet_ieee_srq(int active, CLOCK clk)
+{
+    pia2_signal(PIA_SIG_CB1, active ? PIA_SIG_FALL : PIA_SIG_RISE, 0);
+}
+
+
 /* PET-specific initialization.  */
 int machine_specific_init(void)
 {
@@ -687,6 +694,7 @@ int machine_specific_init(void)
     via_init(machine_context.via);
     pia1_init();
     pia2_init();
+    parallel_ext_srq_hook = pet_ieee_srq;   /* simlink: SRQ -> PIA2 CB1 */
     acia1_init();
 
     /* Initialize the datasette emulation.  */
@@ -789,6 +797,7 @@ void machine_specific_reset(void)
     petdww_reset();
     pethre_reset();
     sampler_reset();
+    parallel_ext_reset();   /* simlink: IFC haengt am PET am Reset */
 }
 
 void machine_specific_shutdown(void)

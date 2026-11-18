@@ -1,0 +1,85 @@
+name: simlink - Windows GTK3 build
+on:
+  push:
+    branches: [ simlink ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: GTK3 Windows x64
+    runs-on: windows-latest
+    steps:
+      - run: git config --global core.autocrlf input
+        shell: bash
+
+      - name: Checkout source
+        uses: actions/checkout@v6
+
+      - name: Install MSYS2 / GTK3 dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            autotools
+            bison
+            flex
+            dos2unix
+            texinfo
+            which
+            file
+            patch
+            diffutils
+            db
+            gdbm
+            libgdbm
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-flac
+            mingw-w64-ucrt-x86_64-giflib
+            mingw-w64-ucrt-x86_64-glew
+            mingw-w64-ucrt-x86_64-gtk3
+            mingw-w64-ucrt-x86_64-icoutils
+            mingw-w64-ucrt-x86_64-lame
+            mingw-w64-ucrt-x86_64-libvorbis
+            mingw-w64-ucrt-x86_64-mpg123
+            mingw-w64-ucrt-x86_64-ntldd
+            mingw-w64-ucrt-x86_64-pkg-config
+            mingw-w64-ucrt-x86_64-portaudio
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-xa65
+            mingw-w64-ucrt-x86_64-iconv
+            p7zip
+            unzip
+            zip
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cd vice
+          ./autogen.sh
+          ./configure --enable-gtk3ui --disable-arch --disable-pdf-docs \
+                      --enable-cpuhistory --with-flac --with-gif --with-lame \
+                      --with-mpg123 --with-png --with-portaudio --with-vorbis \
+                      --with-libcurl --with-unzip-bin \
+            || ( cat config.log ; exit 1 )
+          make -j $(( $NUMBER_OF_PROCESSORS )) -s
+          make bindistzip
+
+      - name: Build simlink test tools
+        shell: msys2 {0}
+        run: |
+          cd vice/src/simlink
+          mkdir -p ../../../simlink-tools
+          gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/sltest.exe test/sltest.c simlink.c -static -lpthread
+          gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/ieeedev.exe test/ieeedev.c simlink.c -static -lpthread
+          cp README.md ../../../simlink-tools/
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v6
+        with:
+          name: vice-gtk3-win64-simlink
+          path: |
+            vice/*.zip
+            simlink-tools/

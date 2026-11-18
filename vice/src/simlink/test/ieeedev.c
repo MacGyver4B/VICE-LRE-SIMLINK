@@ -34,6 +34,9 @@ static unsigned gap_us = 0;         /* -G: als Sprecher vor jedem weiteren Byte 
 static unsigned hold_data_us = 0;   /* -N: NRFD vor jedem Datenbyte (ohne ATN) halten */
 static unsigned ack_us = 0;         /* -A: NDAC nach DAV so lange halten (Quittung verzoegern) */
 static int talk_started = 0;
+static unsigned gap_every = 1;     /* -K: Pause nur vor jedem k-ten Byte (Blockgrenze) */
+static unsigned gap_skip = 0;      /* -S: die ersten n Bytes ohne Pause */
+static unsigned long talk_count = 0;
 static volatile sig_atomic_t stop = 0;
 
 static uint8_t my_pull = 0, my_data = 0;
@@ -215,8 +218,14 @@ static int listen_byte(int under_atn, int *eoi)
 /* ein Byte senden; liefert -1 bei ATN */
 static int talk_byte(int b, int eoi)
 {
-    pause_us(talk_started ? gap_us : first_us);
+    if (!talk_started) {
+        pause_us(first_us);
+        talk_count = 0;
+    } else if (talk_count >= gap_skip && (talk_count % gap_every) == 0) {
+        pause_us(gap_us);
+    }
     talk_started = 1;
+    talk_count++;
     /* warten, bis alle Hoerer bereit (NRFD frei) */
     for (int first = 1;; first = 0) {
         if (first) {
@@ -261,7 +270,7 @@ int main(int argc, char **argv)
     int namelen = 0;
     unsigned long nbytes = 0;
 
-    while ((c = getopt(argc, argv, "u:s:vH:D:G:N:A:")) != -1) {
+    while ((c = getopt(argc, argv, "u:s:vH:D:G:N:A:K:S:")) != -1) {
         switch (c) {
         case 'u': unit = atoi(optarg); break;
         case 's': step_ps = (uint64_t)atoll(optarg) * 1000; break;
@@ -271,6 +280,8 @@ int main(int argc, char **argv)
         case 'G': gap_us = (unsigned)atoi(optarg); break;
         case 'N': hold_data_us = (unsigned)atoi(optarg); break;
         case 'A': ack_us = (unsigned)atoi(optarg); break;
+        case 'K': gap_every = (unsigned)atoi(optarg) ? (unsigned)atoi(optarg) : 1; break;
+        case 'S': gap_skip = (unsigned)atoi(optarg); break;
         default:
             fprintf(stderr, "usage: ieeedev [-u unit] [-s step_ns] [-H us] [-D us] [-G us] [-v] bus\n");
             return 2;

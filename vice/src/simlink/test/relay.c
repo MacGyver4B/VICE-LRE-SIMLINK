@@ -364,7 +364,10 @@ static void log_msg(const char *fmt, const char *a, long v)
 /* Lesekanal bereitstellen (vor dem Annehmen des TALK-Sekundaerbefehls) */
 static void prefetch(int sa)
 {
-    if (cvalid[sa] && sa != 15) {
+    /* Datenkanal: einmal holen (danach Dateiende). Fehlerkanal: neu holen,
+       wenn verbraucht oder nach einem Befehl (cvalid[15] = 0) - GET# liest
+       mit eigenem TALK je Byte, z. B. die Antwort auf M-R. */
+    if (cvalid[sa] && (sa != 15 || cpos[sa] < clen[sa])) {
         return;
     }
     if (!cbuf[sa]) {
@@ -451,13 +454,19 @@ static void finish_listen(int sa)
         log_msg("OPEN %s (Kanal %ld)", "", opening);
         c_write(0xf0 | opening, name, namelen);
         cvalid[opening] = 0;
+        if (namelen) {
+            cvalid[15] = 0;     /* OPEN mit Namen setzt den Fehlerkanal neu */
+        }
         opening = -1;
     } else if (wlen) {
         iec_err = 0;
         c_write(0x60 | sa, wbuf, wlen);
-        log_msg("Daten an Kanal %s weitergereicht: %ld Bytes", iec_err ? "(FEHLER)" : "", (long)wlen);
+        fprintf(stderr, "relay %10.3f ms: Daten an Kanal %d weitergereicht: %lu Bytes%s\n",
+                (double)t / 1e9, sa, (unsigned long)wlen, iec_err ? " (FEHLER)" : "");
         wlen = 0;
-        cvalid[15] = 0;
+        if (sa == 15) {
+            cvalid[15] = 0;     /* Befehl: Fehlerkanal neu holen */
+        }
     }
 }
 
@@ -566,7 +575,6 @@ usage:
                 c_listen(0xe0 | sa);
                 c_unlisten();
                 cvalid[sa] = 0;
-                cvalid[15] = 0;
             }
             continue;
         }
@@ -597,9 +605,6 @@ usage:
                 cpos[sa]++;
                 if (cpos[sa] >= clen[sa]) {
                     role = IDLE;
-                    if (sa == 15) {
-                        cvalid[15] = 0;
-                    }
                 }
             }
             continue;

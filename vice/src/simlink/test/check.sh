@@ -141,6 +141,46 @@ done
 if cmp -s rel1.trace rel2.trace; then ok "Relais-Ablauf gleich ($(wc -l < rel1.trace) Zeilen)"; else bad "Relais-Ablauf verschieden"; fi
 shm_rm chkri; shm_rm chkrc
 
+# Ein Lauf am Relais mit Programm am PET: $1 Name, $2 Tastenpuffer, $3 Takte
+relay_run() {
+    shm_rm chkri; shm_rm chkrc
+    cp disk.d64 $1.d64
+    "$WORK/relay" chkri chkrc > $1.trace 2>&1 &
+    R=$!
+    sleep 0.3
+    timeout 1500 "$SRC/xdrive" -default -directory "$DATA" +sound -iecsimlink chkrc \
+        -8 $1.d64 -warp -limitcycles $(($3 + 3000000)) > $1d.log 2>&1 &
+    X=$!
+    sleep 0.3
+    timeout 1500 "$SRC/xpet" -default -directory "$DATA" +sound -model 4032 -drive8type 0 \
+        +busdevice8 -ieeesimlink chkri -warp -limitcycles $3 -keybuf "$2" > $1p.log 2>&1
+    wait $X
+    sleep 0.5
+    kill $R 2>/dev/null
+    wait $R 2>/dev/null
+    shm_rm chkri; shm_rm chkrc
+}
+
+echo "Relais, Speicherbefehle (M-W, M-R: RAM und 16 KB ROM der 1541):"
+relay_run mem '10 open15,8,15:print#15,"m-w"chr$(0)chr$(6)chr$(4)"abcd"\n20 print#15,"m-r"chr$(0)chr$(6)chr$(4):r$=""\n30 fori=1to4:get#15,x$:r$=r$+x$:next:open2,8,2,"ram,s,w":print#2,r$:close2\n40 open2,8,2,"rom,p,w"\n50 fora=49152to65535step128:h=int(a/256):l=a-h*256\n60 print#15,"m-r"chr$(l)chr$(h)chr$(128):b$=""\n70 fori=1to128:get#15,x$:b$=b$+left$(x$+chr$(0),1):next\n80 print#2,b$;:next:close2:close15\nrun\n' 500000000
+rm -f ram rom
+"$SRC/c1541" mem.d64 -read rom rom >/dev/null 2>&1
+"$SRC/c1541" mem.d64 -read "ram,s" ram >/dev/null 2>&1
+if [ "$(head -c 4 ram 2>/dev/null)" = "ABCD" ] && cmp -s rom "$DATA/DRIVES/dos1541ii-251968-03.bin"; then
+    ok "RAM zurueckgelesen, ROM-Abbild bytegleich ($(wc -c < rom) Bytes)"
+else
+    bad "Speicherbefehle"; grep -v ATN mem.trace | tail -5
+fi
+
+echo "Relais, Befehle (Scratch, Validate, Format):"
+relay_run cmd '10 open15,8,15,"s0:test":print#15,"v0":print#15,"n0:neu,99":close15\nrun\n' 120000000
+if "$SRC/c1541" cmd.d64 -list 2>/dev/null | grep -q '"neu *" 99' \
+   && "$SRC/c1541" cmd.d64 -list 2>/dev/null | grep -q "^664 blocks free"; then
+    ok "Diskette neu formatiert (Name neu, ID 99, 664 Bloecke frei)"
+else
+    bad "Befehle"; grep -v ATN cmd.trace | tail -5
+fi
+
 if [ $FAIL = 0 ]; then
     echo "Alle Tests bestanden."
     rm -rf "$WORK"

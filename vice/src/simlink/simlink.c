@@ -336,7 +336,10 @@ static uint64_t next_activity(sl_part_t *q, uint64_t from, uint8_t mask, int *re
         if (t < from) {
             break;
         }
-        if (t < best) {
+        /* auch t == best: ein Eintrag genau beim Fortschritt von q (bzw. genau
+           bei from) ist schon geschrieben und echt - ohne ihn verpasste ein
+           Wartender eine Aenderung, die vor seinem Wartezeichen kam */
+        if (t <= best) {
             /* Umschalten gegenueber dem Eintrag davor (ohne Vorgaenger: ja) */
             int changed = 1;
             if (k + 1 < SIMLINK_RING && k + 1 < head) {

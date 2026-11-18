@@ -172,6 +172,11 @@ xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
 Gesamttest: `test/check.sh [VICE-Baum]` (Bibliothek, IEEE, IEEE gemischt,
 IEC, Relais; jeweils zwei Laeufe mit Vergleich).
 
+- Relais, Speicherbefehle: M-W/M-R im RAM der 1541 und 16 KB DOS-ROM per
+  M-R (128 Bytes je Befehl, GET# je Byte) - ROM-Datei bytegleich, Pruefsumme
+  stimmt. Dazu Scratch, Validate, Format (N0:NEU,99) ueber das Relais.
+  Derselbe Test direkt (xpet + 2031, x64sc + 1541) liefert ebenfalls das
+  jeweilige ROM bytegleich.
 - Relais (xpet + relay + xdrive mit 1541): Verzeichnis, LOAD 5013 Bytes,
   SAVE bytegleich, GET# einer Datei bis EOI (ST 64), Fehlerkanal mit
   62,FILE NOT FOUND nach fehlender Datei; zwei Laeufe mit gleichem Ablauf.

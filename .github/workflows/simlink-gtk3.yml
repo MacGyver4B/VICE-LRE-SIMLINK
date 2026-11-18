@@ -76,6 +76,7 @@ jobs:
           gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/ieeedev.exe test/ieeedev.c simlink.c -static -lpthread
           gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/iechost.exe test/iechost.c simlink.c -static -lpthread
           gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/relay.exe test/relay.c simlink.c -static -lpthread
+          gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/buslog.exe test/buslog.c simlink.c -static -lpthread
           cp README.md ../../../simlink-tools/
 
       - name: Upload zip

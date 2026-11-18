@@ -196,6 +196,11 @@ x64sc -drive8type 0 +busdevice8 -iecsimlink iec1 -iecsimlinkdevice
   beim PET; ein neues LISTEN je 254 Bytes fiel bei der 8250 auf das Schreiben
   des vollen Blocks, danach gab sie NRFD nicht mehr frei.
 
+Mitschreiber (Diagnose): `buslog [-i] [-o datei] bus` haengt passiv am Bus
+und schreibt jeden Wechsel mit emulierter Zeit auf; am Ende Anzahl Wechsel
+und kuerzeste Phase je Leitung. Am IEC-Bus mit `x64sc ... -iecsimlinkdevice`.
+Bekannt: Transwarp haengt mit angehaengtem buslog im Vorspeeder (offen).
+
 Gesamttest: `test/check.sh [VICE-Baum]` (Bibliothek, IEEE, IEEE gemischt,
 IEC, Relais; jeweils zwei Laeufe mit Vergleich).
 

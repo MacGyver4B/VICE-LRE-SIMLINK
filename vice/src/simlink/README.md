@@ -196,13 +196,43 @@ x64sc -drive8type 0 +busdevice8 -iecsimlink iec1 -iecsimlinkdevice
   beim PET; ein neues LISTEN je 254 Bytes fiel bei der 8250 auf das Schreiben
   des vollen Blocks, danach gab sie NRFD nicht mehr frei.
 
+Schnelllader am IEC-Bus (`relay -a ar6.crt [-B] [-8]`): LOAD und SAVE im
+Vorwaertsbetrieb ueber AR6 (Action Replay 6, Host-Seite nachgebaut) bzw.
+Burst-Fastload (C128). Den AR6-Laufwerkscode liest das Relais zur Laufzeit
+aus Bank 2 des CRT-Abbilds; er steht nicht im Repo.
+
+- Erkennung bei jedem LOAD/SAVE per M-R: `$FFFE` = `$03` 1581, `$67` dann
+  `$FF79` = `$AA` 1541, `$E6` 1570/1571; sonst Standardprotokoll. Scheitert
+  der Schnelllader, laedt bzw. speichert das Relais normal.
+- 1541: AR6 LOAD (Spuren mit `$E0`, Verzeichnis und Kette im Relais) und
+  SAVE (Laufwerk schreibt die Kette selbst). 1571: AR6 im 1541-Modus
+  (`U0>M0`) oder mit `-B` Burst im 1571-Modus (`U0>M1`). 1581: Burst; mit
+  `-8` versuchsweise AR6 (Laufwerkscode `$99B0`, bricht gelegentlich im
+  letzten Block ab, dann laedt das Relais normal).
+- Timing Laufwerk -> Rechner: DATA schon freigeben, solange das Laufwerk
+  beschaeftigt ist (CLK low); dann erkennt es die Freigabe beim ersten
+  Abfragen, die Bitpaare kommen fest nach seiner CLK-Flanke (1541 W+11,
+  1581 W+7, je 8 us). Ist das Laufwerk schon bereit, dient die eigene
+  Freigabe als Bezug.
+- Rechner -> Laufwerk: Paare bei +8/+18/+34/+44 us wie beim C64; die
+  Freigabe muss laenger stehen als ein Abfragezyklus des Laufwerks (7 us),
+  bei +7 gingen einzelne Bytes verloren.
+- Fast Serial: VICE bildet es byteweise nach. Ueber simlink schaltet jedes
+  Byte SRQ um, der Wert steht im Datenfeld (iecbus-simlink.c,
+  c64fastiec.c). Das Relais sendet das Ankuendigungsbyte `$FF` nur vor dem
+  ATN des Burst-Befehls, sonst antwortet das Laufwerk auch auf normales
+  TALK schnell.
+- `AR_DUMP=datei`: zuletzt geladene bzw. zu speichernde Datei ablegen.
+
 Mitschreiber (Diagnose): `buslog [-i] [-o datei] bus` haengt passiv am Bus
 und schreibt jeden Wechsel mit emulierter Zeit auf; am Ende Anzahl Wechsel
 und kuerzeste Phase je Leitung. Am IEC-Bus mit `x64sc ... -iecsimlinkdevice`.
 Bekannt: Transwarp haengt mit angehaengtem buslog im Vorspeeder (offen).
 
 Gesamttest: `test/check.sh [VICE-Baum]` (Bibliothek, IEEE, IEEE gemischt,
-IEC, Relais; jeweils zwei Laeufe mit Vergleich).
+IEC, Relais; jeweils zwei Laeufe mit Vergleich). Mit `AR6_CRT=ar6.crt`
+zusaetzlich die Schnelllader (AR6 1541 LOAD+SAVE, AR6 und Burst auf der
+1571, Burst auf der 1581).
 
 - Relais, Speicherbefehle: M-W/M-R im RAM der 1541 und 16 KB DOS-ROM per
   M-R (128 Bytes je Befehl, GET# je Byte) - ROM-Datei bytegleich, Pruefsumme

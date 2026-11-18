@@ -101,6 +101,11 @@ extern void (*iecbus_update_ports)(void);
 /* simlink: externer Rechner am IEC-Bus (iecbus/iecbus-simlink.c) */
 extern int iecbus_ext_active;
 void iecbus_ext_drive_changed(unsigned int dnr);
+/* Fast Serial (Byte ueber das Schieberegister) eines Laufwerks an den
+   externen Rechner; Rechner -> Laufwerke ueber den Zeiger (gesetzt von
+   c64fastiec_init/c128fastiec_init) */
+void iecbus_ext_fast_drive_write(uint8_t data, unsigned int dnr);
+extern void (*iecbus_ext_fast_host_write)(uint8_t data);
 
 /* Leitungen des externen Rechners (1 = Leitung gezogen, wie simlink) */
 #define IECBUS_EXT_ATN   0x01

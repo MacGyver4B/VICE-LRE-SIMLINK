@@ -181,6 +181,60 @@ else
     bad "Befehle"; grep -v ATN cmd.trace | tail -5
 fi
 
+# Schnelllader: nur mit einem Action-Replay-6-Abbild (Bank 2 liefert den
+# Laufwerkscode, er steht nicht im Repo): AR6_CRT=/pfad/ar6.crt check.sh
+# $1 Name, $2 Laufwerkstyp, $3 Abbild, $4 Tastenpuffer, $5 Takte, $6 Relais-Optionen
+fast_run() {
+    shm_rm chkri; shm_rm chkrc
+    AR_DUMP="$WORK/$1.got" "$WORK/relay" -v $6 -a "$AR6_CRT" chkri chkrc > $1.trace 2>&1 &
+    R=$!
+    sleep 0.3
+    timeout 1500 "$SRC/xdrive" -default -directory "$DATA" +sound -iecsimlink chkrc \
+        -drive8type $2 -8 $3 -warp -limitcycles $(($5 + 3000000)) > $1d.log 2>&1 &
+    X=$!
+    sleep 0.3
+    timeout 1500 "$SRC/xpet" -default -directory "$DATA" +sound -model 4032 -drive8type 0 \
+        +busdevice8 -ieeesimlink chkri -warp -limitcycles $5 -keybuf "$4" > $1p.log 2>&1
+    wait $X
+    sleep 0.5
+    kill $R 2>/dev/null
+    wait $R 2>/dev/null
+    shm_rm chkri; shm_rm chkrc
+}
+if [ -n "${AR6_CRT:-}" ] && [ -f "$AR6_CRT" ]; then
+    echo "Schnelllader (AR6 1541/1571, Burst 1571/1581):"
+    cp disk.d64 ar41.d64
+    fast_run ar41 1541 ar41.d64 'load"big",8\nsave"neu",8\n10 open1,8,15:input#1,a,b$:close1\nload"nix",8\nrun\n' 45000000 ""
+    rm -f arneu
+    "$SRC/c1541" ar41.d64 -read neu arneu >/dev/null 2>&1
+    if cmp -s big ar41.got && cmp -s big arneu && grep -q "AR6 SAVE:" ar41.trace \
+       && grep -q "Kanal 15 geholt: 25 Bytes" ar41.trace; then
+        ok "1541 AR6: LOAD und SAVE bytegleich, Fehlerkanal nach FILE NOT FOUND"
+    else
+        bad "1541 AR6"; grep -v ATN ar41.trace | tail -6
+    fi
+    for v in "1571 ar71 -" "1571 bu71 -B" "1581 bu81 -"; do
+        set -- $v
+        img=$2.d64
+        if [ $1 = 1581 ]; then
+            img=$2.d81
+            "$SRC/c1541" -format "schnell,81" d81 $img -write big big >/dev/null 2>&1
+        else
+            cp disk.d64 $img
+        fi
+        o=""; [ "$3" = "-B" ] && o="-B"
+        p=AR6; { [ -n "$o" ] || [ $1 = 1581 ]; } && p=Burst
+        fast_run $2 $1 $img 'load"big",8\n' 20000000 "$o"
+        if cmp -s big $2.got && grep -q "$p.*B/s" $2.trace; then
+            ok "$1 $p: LOAD bytegleich ($(grep -o '[0-9]* B/s' $2.trace | tail -1))"
+        else
+            bad "$1 $o"; grep -v ATN $2.trace | tail -6
+        fi
+    done
+else
+    echo "Schnelllader: uebersprungen (AR6_CRT nicht gesetzt)"
+fi
+
 echo "Gegenrichtung (x64sc + relay -r + xpet mit 8250):"
 # C64 bleibt am IEC-Bus (-iecsimlinkdevice), das Relais ist dort Geraet 8 und
 # am IEEE-Bus Controller einer 8250 in xpet (PET ruht).

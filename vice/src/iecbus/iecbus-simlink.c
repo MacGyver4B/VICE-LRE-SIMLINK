@@ -79,6 +79,11 @@ static uint8_t pub_pull = 0;        /* zuletzt veroeffentlicht */
 static uint64_t pub_ps = 0;
 static int ext_valid = 0;
 static uint8_t ext_pull = 0;        /* zuletzt eingespeist */
+/* Fast Serial: jedes Byte schaltet SRQ um, der Wert steht in den Daten */
+static uint8_t pub_fast = 0;        /* SL_IEC_SRQ oder 0 */
+static uint8_t pub_data = 0;
+static int pub_force = 0;
+void (*iecbus_ext_fast_host_write)(uint8_t data) = NULL;
 
 /* Zusammenhang Haupt-/Laufwerkstakt je Laufwerk (vor jedem Nachziehen) */
 static drive_sync_snap_t snap[NUM_DISK_UNITS];
@@ -138,11 +143,12 @@ static uint8_t vice_pull(void)
 
 static void publish(uint64_t t)
 {
-    uint8_t p = vice_pull();
+    uint8_t p = vice_pull() | pub_fast;
 
-    if (p == pub_pull) {
+    if (p == pub_pull && !pub_force) {
         return;
     }
+    pub_force = 0;
     if (t < pub_ps) {
         t = pub_ps;
     }
@@ -151,7 +157,25 @@ static void publish(uint64_t t)
     }
     pub_ps = t;
     pub_pull = p;
-    simlink_set(sl, sl_slot, t, p, 0);
+    simlink_set(sl, sl_slot, t, p, pub_data);
+}
+
+/* Aufruf aus iec_fast_drive_write(): Laufwerk dnr gibt ein Byte ueber das
+   Schieberegister aus (VICE bildet Fast Serial byteweise nach) */
+void iecbus_ext_fast_drive_write(uint8_t data, unsigned int dnr)
+{
+    uint64_t t = done_ps;
+
+    if (!sl || iecbus_ext_device) {
+        return;
+    }
+    if (in_sync && dnr < NUM_DISK_UNITS) {
+        t = m2ps(drive_sync_main_clock(&snap[dnr], *diskunit_context[dnr]->clk_ptr));
+    }
+    pub_fast ^= SL_IEC_SRQ;
+    pub_data = data;
+    pub_force = 1;
+    publish(t);
 }
 
 /* Aufruf aus iec_drive_write(): Laufwerk dnr hat seine Ausgaenge geaendert */
@@ -201,13 +225,20 @@ static uint8_t to_ext(uint8_t l)
 /* Stand des externen Rechners zum Zeitpunkt t (Takt c) einspeisen */
 static void apply_ext(uint64_t t, CLOCK c)
 {
-    uint8_t l = simlink_peek_others(sl, sl_slot, t, NULL) & (SL_IEC_ATN | SL_IEC_CLK | SL_IEC_DATA);
+    uint8_t d = 0;
+    uint8_t l = simlink_peek_others(sl, sl_slot, t, &d) & (SL_IEC_ATN | SL_IEC_CLK | SL_IEC_DATA | SL_IEC_SRQ);
 
     if (ext_valid && l == ext_pull) {
         return;
     }
+    if (ext_valid && ((l ^ ext_pull) & SL_IEC_SRQ) && !iecbus_ext_device
+        && iecbus_ext_fast_host_write) {
+        /* Fast-Serial-Byte des externen Rechners an die Laufwerke */
+        iecbus_ext_fast_host_write(d);
+    }
     ext_valid = 1;
     ext_pull = l;
+    l &= (uint8_t)~SL_IEC_SRQ;
     if (iecbus_ext_device) {
         /* Geraet: nur CLK und DATA, ATN gehoert dem Rechner */
         uint8_t dev = 0xff;

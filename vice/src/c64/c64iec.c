@@ -147,6 +147,9 @@ void iec_drive_write(uint8_t data, unsigned int dnr)
     iecbus.drv_bus[dnr + 8] = (((data << 3) & 0x40) | ((data << 6) & ((~data ^ iecbus.cpu_bus) << 3) & 0x80));
     iecbus.drv_data[dnr + 8] = data;
     iec_update_ports();
+    if (drive_ext_iec_changed) {
+        drive_ext_iec_changed(dnr);  /* simlink: Ausgaben veroeffentlichen */
+    }
 }
 
 /* This function must have no side effects */
@@ -171,9 +174,46 @@ int iec_available_busses(void)
     }
 }
 
+/* simlink: externer Rechner am IEC-Bus */
+static int c64iec_active_saved = 1;
+
+static void c64iec_ext_disconnect(int on)
+{
+    if (on) {
+        c64iec_active_saved = c64iec_active;
+        c64iec_active = 0;      /* CIA2 des C64 nicht mehr am Bus */
+    } else {
+        c64iec_active = c64iec_active_saved;
+    }
+}
+
+/* Leitungen wie ein Schreibzugriff des C64 auf CIA2 Port A uebergeben
+   (Wert wie in c64cia2.c: invertiertes PA; PA3 ATN, PA4 CLK, PA5 DATA) */
+static void c64iec_ext_host_write(uint8_t pull, CLOCK clk)
+{
+    uint8_t pa = 0;
+
+    if (pull & IECBUS_EXT_ATN) {
+        pa |= 0x08;
+    }
+    if (pull & IECBUS_EXT_CLK) {
+        pa |= 0x10;
+    }
+    if (pull & IECBUS_EXT_DATA) {
+        pa |= 0x20;
+    }
+    (*iecbus_callback_write)((uint8_t)~pa, clk);
+}
+
+static const iecbus_ext_machine_t c64iec_ext_machine = {
+    c64iec_ext_disconnect,
+    c64iec_ext_host_write
+};
+
 void c64iec_init(void)
 {
     iecbus_update_ports = iec_update_ports;
+    iecbus_ext_machine = &c64iec_ext_machine;
 }
 
 void c64iec_enable(int val)

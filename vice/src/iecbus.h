@@ -98,4 +98,28 @@ int iecbus_device_write(unsigned int unit, uint8_t data);
 
 extern void (*iecbus_update_ports)(void);
 
+/* simlink: externer Rechner am IEC-Bus (iecbus/iecbus-simlink.c) */
+extern int iecbus_ext_active;
+void iecbus_ext_drive_changed(unsigned int dnr);
+
+/* Leitungen des externen Rechners (1 = Leitung gezogen, wie simlink) */
+#define IECBUS_EXT_ATN   0x01
+#define IECBUS_EXT_CLK   0x02
+#define IECBUS_EXT_DATA  0x04
+
+/* von der Maschine bereitgestellt (z. B. c64iec.c) */
+typedef struct iecbus_ext_machine_s {
+    /* eigenen Rechner vom IEC-Bus trennen (1) bzw. wieder verbinden (0) */
+    void (*disconnect)(int on);
+    /* Leitungen des externen Rechners ueber den normalen Schreibweg
+       (iecbus_callback_write) auf den Bus legen */
+    void (*host_write)(uint8_t pull, CLOCK clk);
+} iecbus_ext_machine_t;
+
+extern const iecbus_ext_machine_t *iecbus_ext_machine;
+void iecbus_ext_reset(void);
+int iecbus_simlink_resources_init(void);
+void iecbus_simlink_resources_shutdown(void);
+int iecbus_simlink_cmdline_options_init(void);
+
 #endif

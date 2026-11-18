@@ -78,6 +78,25 @@ xpet -ieeesimlink <bus> [-ieeesimlinkstep <takte>]
   Takt des PET gestempelt (Laufwerke laufen in VICE nachgezogen), nicht
   mit ihrem eigenen.
 
+## Am IEC-Bus (x64sc, Vorstufe zu xdrive)
+
+```
+x64sc -drive8type 1541 -8 disk.d64 +busdevice8 -iecsimlink <bus> [-iecsimlinkstep <takte>]
+```
+
+- Ein externer Rechner uebernimmt die Rechnerseite des IEC-Busses; der C64
+  wird ueber den vorhandenen Schalter (`c64iec_active`) vom Bus getrennt.
+- Die Leitungen des externen Rechners gehen ueber den normalen Schreibweg
+  (`iecbus_callback_write`) auf den Bus, wie ein Schreibzugriff des C64.
+- Abgleich ohne Vorlauf: Laufwerke werden nur so weit nachgezogen, wie der
+  Stand des externen Rechners feststeht; jede seiner Aenderungen wird genau
+  zu ihrer Zeit eingespeist. Ausgaben der Laufwerke tragen den Zeitstempel
+  ihres eigenen Takts.
+- Fortschritt t heisst: alle eigenen Eintraege vor t sind endgueltig.
+- Haken in VICE: `drive_ext_sync_add()` (vor jedem Nachziehen der Laufwerke,
+  auch vom IEEE-Teilnehmer genutzt) und `drive_ext_iec_changed` (Laufwerk
+  hat seine IEC-Ausgaenge geaendert).
+
 ## Test
 
 Bibliothek allein (zwei Prozesse):
@@ -92,6 +111,18 @@ Windows-Fassung der Tests (Cross-Build, z. B. unter Wine pruefbar):
 ```
 x86_64-w64-mingw32-gcc -O2 -std=c11 -I. -o sltest.exe test/sltest.c simlink.c -static -lpthread
 ```
+
+Testrechner am IEC-Bus (serielles Commodore-Protokoll auf Leitungsebene):
+
+```
+cc -O2 -std=c11 -I. -o iechost test/iechost.c simlink.c -lpthread
+./iechost [-w s] [-v] iec1 status load NAME DATEI save DATEI NAME dir DATEI &
+x64sc -drive8type 1541 -8 disk.d64 +busdevice8 -iecsimlink iec1
+```
+
+Hinweis: Die 1541 fragt CLK unter ATN in Schleifen von rund 50 us ab; der
+Testrechner haelt jede Phase deshalb mindestens 60 us. Nach dem Start
+wartet er (-w), bis das Laufwerk hochgefahren ist.
 
 Testgeraet am IEEE-Bus (Protokollebene, Dateien im Arbeitsverzeichnis):
 
@@ -114,3 +145,7 @@ xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
 - Windows-Fassung der Bibliothek (MinGW, unter Wine 9.0): Handshake-Test
   ohne Fehler, emulierte Zeit in beiden Laeufen identisch; Ringtest ohne
   Abweichungen. Unter Wine deutlich langsamer als nativ unter Linux.
+- IEC: x64sc mit 1541 (True-Drive-Emulation, D64) und `iechost`: Status,
+  LOAD (17 und 5013 Bytes), Verzeichnis, SAVE und erneutes LOAD bytegleich,
+  rund 400 Bytes/s wie beim echten Geraet; zwei Laeufe mit identischer
+  Busspur.

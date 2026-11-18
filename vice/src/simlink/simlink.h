@@ -110,6 +110,26 @@ uint64_t simlink_waits(simlink_t *sl);
    Eigene Zeitstempel muessen >= diesem Wert sein. */
 uint64_t simlink_start_time(simlink_t *sl, int slot);
 
+/* --- Bausteine fuer Teilnehmer, die selbst schrittweise nachziehen
+       (z. B. VICE-Laufwerke am IEC-Bus) --- */
+
+/* kleinster Fortschritt der anderen aktiven Teilnehmer (UINT64_MAX: keiner);
+   *err = 1, wenn einer ERROR meldet */
+uint64_t simlink_peers_progress(simlink_t *sl, int slot, int *err);
+
+/* wartet, bis der Fortschritt der anderen groesser als 'above' ist;
+   liefert den neuen Fortschritt */
+uint64_t simlink_wait_peers(simlink_t *sl, int slot, uint64_t above);
+
+/* Stand der anderen zum Zeitpunkt t einschliesslich (ohne Warten;
+   nur gueltig fuer t <= simlink_peers_progress) */
+uint8_t simlink_peek_others(simlink_t *sl, int slot, uint64_t t_ps, uint8_t *data);
+
+/* frueheste Aenderung eines anderen Teilnehmers mit after < t <= upto;
+   1 und *t_change, oder 0 */
+int simlink_next_change(simlink_t *sl, int slot, uint64_t after, uint64_t upto,
+                        uint64_t *t_change);
+
 /* Anzahl aktiver Teilnehmer ausser slot */
 int simlink_others(simlink_t *sl, int slot);
 

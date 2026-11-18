@@ -233,7 +233,6 @@ static uint8_t read_prb(via_context_t *via_context, bool peek_only)
 
     if (!peek_only) {
         drive_catch_up_hook(maincpu_clk);
-        parallel_ext_sync(maincpu_clk);
     }
 
     /* read parallel IEC interface line states */

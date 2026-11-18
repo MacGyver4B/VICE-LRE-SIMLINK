@@ -37,6 +37,7 @@
 #include "c64-cmdline-options.h"
 #include "c64-resources.h"
 #include "cmdline.h"
+#include "iecbus.h"
 #include "log.h"
 #include "machine.h"
 #include "resources.h"
@@ -268,5 +269,8 @@ static const cmdline_option_t cmdline_options[] =
 
 int c64_cmdline_options_init(void)
 {
+    if (iecbus_simlink_cmdline_options_init() < 0) {
+        return -1;
+    }
     return cmdline_register_options(cmdline_options);
 }

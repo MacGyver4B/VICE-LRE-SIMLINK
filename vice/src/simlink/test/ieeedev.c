@@ -341,7 +341,8 @@ int main(int argc, char **argv)
                 if (last) {
                     rhave[sa] = 0;
                     role = IDLE;
-                    fprintf(stderr, "ieeedev: Datei %s ausgeliefert\n", names[sa]);
+                    fprintf(stderr, "ieeedev: Datei %s ausgeliefert (gesamt %lu Bytes)\n",
+                            names[sa], nbytes);
                 } else {
                     rbuf[sa] = (unsigned char)nx;
                 }

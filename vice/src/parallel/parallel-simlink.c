@@ -24,10 +24,12 @@
 #include "vice.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "alarm.h"
 #include "cmdline.h"
+#include "drive.h"
 #include "lib.h"
 #include "log.h"
 #include "machine.h"
@@ -100,6 +102,17 @@ static uint8_t vice_pull(void)
 
 static void sl_alarm_handler(CLOCK offset, void *data);
 
+/* beim Programmende abmelden, damit kein toter Teilnehmer im Bus bleibt */
+static void sl_atexit(void)
+{
+    if (sl) {
+        simlink_detach(sl, sl_slot);
+        simlink_close(sl, 0);
+        sl = NULL;
+    }
+}
+static void parallel_ext_sync(CLOCK clk);
+
 static int stopping = 0;
 
 static void sl_stop(void)
@@ -126,6 +139,7 @@ static void sl_stop(void)
     if (sl_alarm) {
         alarm_unset(sl_alarm);
     }
+    drive_ext_sync_remove(parallel_ext_sync);
     started = 0;
 }
 
@@ -158,6 +172,13 @@ static void sl_start(void)
         sl = NULL;
         return;
     }
+    {
+        static int atexit_done = 0;
+        if (!atexit_done) {
+            atexit(sl_atexit);
+            atexit_done = 1;
+        }
+    }
     cps = machine_get_cycles_per_second();
     ps_per_cycle = cps > 0 ? (uint64_t)(1000000000000ULL / (uint64_t)cps) : 1000000;
     if (!sl_alarm) {
@@ -167,6 +188,7 @@ static void sl_start(void)
     base_ps = (int64_t)simlink_start_time(sl, sl_slot) - (int64_t)((uint64_t)maincpu_clk * ps_per_cycle);
     last_ps = 0;
     alarm_set(sl_alarm, maincpu_clk + (CLOCK)simlink_step);
+    drive_ext_sync_add(parallel_ext_sync);
     simlink_set(sl, sl_slot, clk2ps(maincpu_clk), vice_pull(),
                 (uint8_t)~parallel_bus_vice());
     log_message(sl_log, "Attached to IEEE bus '%s' as participant %d (%lld ps/cycle).",
@@ -188,9 +210,11 @@ void parallel_ext_notify(void)
     simlink_set(sl, sl_slot, clk2ps(maincpu_clk), vice_pull(), (uint8_t)~parallel_bus_vice());
 }
 
-/* Vor jedem Lesen der IEEE-Leitungen durch den PET aufgerufen: holt den Stand
-   der externen Teilnehmer zum Zeitpunkt clk und speist ihn unter PARALLEL_EXT ein. */
-void parallel_ext_sync(CLOCK clk)
+/* Haken vor jedem Nachziehen der Laufwerke - VICE ruft das vor jedem Lesen
+   der IEEE-Leitungen durch den Rechner auf (drive_catch_up_hook): holt den
+   Stand der externen Teilnehmer zum Zeitpunkt clk und speist ihn unter
+   PARALLEL_EXT ein. */
+static void parallel_ext_sync(CLOCK clk)
 {
     uint8_t l, d, srq;
 
@@ -272,9 +296,6 @@ void parallel_ext_notify(void)
 {
 }
 
-void parallel_ext_sync(CLOCK clk)
-{
-}
 
 void parallel_ext_reset(void)
 {

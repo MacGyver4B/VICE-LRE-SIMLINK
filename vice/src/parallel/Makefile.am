@@ -21,5 +21,4 @@ libparallel_a_SOURCES = \
 	parallel-trap.c \
 	parallel-trap.h \
 	parallel-simlink.c \
-	parallel-simlink-lib.c \
 	parallel.c

@@ -129,6 +129,9 @@ static void undump_pra(via_context_t *via_context, uint8_t byte)
         iecbus->drv_port = (((iecbus->cpu_port >> 4) & 0x4)
                             | (iecbus->cpu_port >> 7)
                             | ((iecbus->cpu_bus << 3) & 0x80));
+        if (drive_ext_iec_changed) {
+            drive_ext_iec_changed(viap->number);   /* simlink */
+        }
     } else {
         iec_drive_write((uint8_t)(~byte), viap->number);
     }
@@ -164,6 +167,9 @@ static void store_pra(via_context_t *via_context, uint8_t byte, uint8_t oldpa,
             iecbus->drv_port = (((iecbus->cpu_port >> 4) & 0x4)
                                 | (iecbus->cpu_port >> 7)
                                 | ((iecbus->cpu_bus << 3) & 0x80));
+            if (drive_ext_iec_changed) {
+                drive_ext_iec_changed(viap->number);   /* simlink */
+            }
 
             DEBUG_IEC_BUS_WRITE(iecbus->drv_port);
         } else {

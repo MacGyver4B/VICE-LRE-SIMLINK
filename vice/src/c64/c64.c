@@ -71,6 +71,7 @@
 #include "drive-resources.h"
 #include "drive-sound.h"
 #include "drive.h"
+#include "iecbus.h"
 #include "export.h"
 #include "fliplist.h"
 #include "fmopl.h"
@@ -1300,6 +1301,8 @@ void machine_specific_reset(void)
     sampler_reset();
 
     reset_poweron = 0;
+
+    iecbus_ext_reset();     /* simlink: externer Rechner am IEC-Bus */
 }
 
 void machine_specific_powerup(void)

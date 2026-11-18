@@ -41,6 +41,7 @@
 #include "cartio.h"
 #include "cartridge.h"
 #include "cia.h"
+#include "iecbus.h"
 #include "lib.h"
 #include "log.h"
 #include "machine.h"
@@ -493,6 +494,9 @@ int c64_resources_init(void)
     if (resources_register_string(resources_string) < 0) {
         return -1;
     }
+    if (iecbus_simlink_resources_init() < 0) {
+        return -1;
+    }
 
     return resources_register_int(resources_int);
 }
@@ -502,4 +506,5 @@ void c64_resources_shutdown(void)
     lib_free(chargen_rom_name);
     lib_free(basic_rom_name);
     lib_free(kernal_rom_name);
+    iecbus_simlink_resources_shutdown();
 }

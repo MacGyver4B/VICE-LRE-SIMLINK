@@ -1024,8 +1024,50 @@ int drive_num_leds(unsigned int dnr)
     }
 }
 
-/* run drive cpu for given main clock value */
-void drive_cpu_execute_one(diskunit_context_t *drv, CLOCK clk_value)
+/* simlink: externe Teilnehmer an IEC- oder IEEE-Bus. Die Haken werden vor
+   jedem Nachziehen der Laufwerke aufgerufen (also auch vor jedem Lesen der
+   Busleitungen durch den Rechner) und gleichen den Bus bis clk_value ab. */
+/* simlink: ein Laufwerk hat seine IEC-Ausgaenge geaendert (dnr) */
+void (*drive_ext_iec_changed)(unsigned int dnr) = NULL;
+
+#define DRIVE_EXT_SYNC_MAX 2
+static void (*drive_ext_sync_hooks[DRIVE_EXT_SYNC_MAX])(CLOCK clk_value);
+static int drive_ext_sync_count = 0;
+
+void drive_ext_sync_add(void (*hook)(CLOCK clk_value))
+{
+    int i;
+    for (i = 0; i < drive_ext_sync_count; i++) {
+        if (drive_ext_sync_hooks[i] == hook) {
+            return;
+        }
+    }
+    if (drive_ext_sync_count < DRIVE_EXT_SYNC_MAX) {
+        drive_ext_sync_hooks[drive_ext_sync_count++] = hook;
+    }
+}
+
+void drive_ext_sync_remove(void (*hook)(CLOCK clk_value))
+{
+    int i;
+    for (i = 0; i < drive_ext_sync_count; i++) {
+        if (drive_ext_sync_hooks[i] == hook) {
+            drive_ext_sync_hooks[i] = drive_ext_sync_hooks[--drive_ext_sync_count];
+            return;
+        }
+    }
+}
+
+static inline void drive_ext_sync(CLOCK clk_value)
+{
+    int i;
+    for (i = 0; i < drive_ext_sync_count; i++) {
+        drive_ext_sync_hooks[i](clk_value);
+    }
+}
+
+/* run drive cpu for given main clock value (ohne simlink-Abgleich) */
+static void drive_cpu_execute_one_raw(diskunit_context_t *drv, CLOCK clk_value)
 {
     if (drv->type == DRIVE_TYPE_2000 ||
         drv->type == DRIVE_TYPE_4000 ||
@@ -1034,6 +1076,13 @@ void drive_cpu_execute_one(diskunit_context_t *drv, CLOCK clk_value)
     } else {
         drivecpu_execute(drv, clk_value);
     }
+}
+
+/* run drive cpu for given main clock value */
+void drive_cpu_execute_one(diskunit_context_t *drv, CLOCK clk_value)
+{
+    drive_ext_sync(clk_value);
+    drive_cpu_execute_one_raw(drv, clk_value);
 }
 
 /* With more than one drive enabled, run the drives forward together, one main CPU clock at a
@@ -1055,6 +1104,8 @@ static void drive_cpu_execute_in_step(CLOCK clk_value)
     CLOCK t1 = clk_value, t2 = clk_value; /* the oldest and the next oldest drive clock */
     CLOCK t;
 
+    drive_ext_sync(clk_value);
+
     for (dnr = 0; dnr < NUM_DISK_UNITS; dnr++) {
         diskunit_context_t *unit = diskunit_context[dnr];
 
@@ -1075,7 +1126,7 @@ static void drive_cpu_execute_in_step(CLOCK clk_value)
     }
     if (enabled > 1) {
         if (t1 < t2) {
-            drive_cpu_execute_one(diskunit_context[oldest], t2);
+            drive_cpu_execute_one_raw(diskunit_context[oldest], t2);
         }
         t = t2;
         while (++t < clk_value) {
@@ -1083,7 +1134,7 @@ static void drive_cpu_execute_in_step(CLOCK clk_value)
                 diskunit_context_t *unit = diskunit_context[dnr];
 
                 if (unit->enable && unit->cpu->last_clk < t) {
-                    drive_cpu_execute_one(unit, t);
+                    drive_cpu_execute_one_raw(unit, t);
                 }
             }
         }
@@ -1092,7 +1143,7 @@ static void drive_cpu_execute_in_step(CLOCK clk_value)
         diskunit_context_t *unit = diskunit_context[dnr];
 
         if (unit->enable && unit->cpu->last_clk < clk_value) {
-            drive_cpu_execute_one(unit, clk_value);
+            drive_cpu_execute_one_raw(unit, clk_value);
         }
     }
 }

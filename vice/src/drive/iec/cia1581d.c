@@ -174,6 +174,9 @@ static void store_ciapb(cia_context_t *cia_context, CLOCK rclk, uint8_t byte)
                 (uint8_t)((((cia1581p->iecbus->cpu_port >> 4) & 0x4)
                             | (cia1581p->iecbus->cpu_port >> 7)
                             | ((cia1581p->iecbus->cpu_bus << 3) & 0x80)));
+            if (drive_ext_iec_changed) {
+                drive_ext_iec_changed(cia1581p->number);   /* simlink */
+            }
         } else {
             iec_drive_write((uint8_t)(~byte), cia1581p->number);
         }

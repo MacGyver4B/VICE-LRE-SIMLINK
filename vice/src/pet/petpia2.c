@@ -121,7 +121,6 @@ static uint8_t read_pa(void)
     uint8_t byte;
 
     drive_catch_up_hook(maincpu_clk);
-    parallel_ext_sync(maincpu_clk);
 
 #ifdef DEBUG
     if (debug.ieee) {

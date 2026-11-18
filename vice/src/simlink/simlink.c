@@ -468,3 +468,87 @@ int simlink_others(simlink_t *sl, int slot)
     }
     return n;
 }
+
+uint64_t simlink_peers_progress(simlink_t *sl, int slot, int *err)
+{
+    int e = 0;
+    uint64_t m = min_other(sl->shm, slot, &e);
+    if (err) {
+        *err = e;
+    }
+    return m;
+}
+
+uint64_t simlink_wait_peers(simlink_t *sl, int slot, uint64_t above)
+{
+    unsigned n = 0;
+    int waited = 0;
+    for (;;) {
+        int e = 0;
+        uint64_t m = min_other(sl->shm, slot, &e);
+        if (m > above || e) {
+            if (waited) {
+                sl->waits++;
+            }
+            return m;
+        }
+        waited = 1;
+        spin(&n);
+    }
+}
+
+uint8_t simlink_peek_others(simlink_t *sl, int slot, uint64_t t_ps, uint8_t *data)
+{
+    sl_shm_t *shm = sl->shm;
+    uint32_t pull = 0, d = 0;
+    int i;
+    uint64_t t = (t_ps == UINT64_MAX) ? t_ps : t_ps + 1;   /* einschliesslich t */
+
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        sl_part_t *p = &shm->part[i];
+        sl_entry_t e;
+        if (i == slot || !active(p)) {
+            continue;
+        }
+        e = state_before(p, t);
+        pull |= ST_PULL(e.state);
+        d |= ST_DATA(e.state);
+        sl->rd_pulses[i] = e.pulses;
+    }
+    if (data) {
+        *data = (uint8_t)d;
+    }
+    return (uint8_t)pull & shm->line_mask;
+}
+
+int simlink_next_change(simlink_t *sl, int slot, uint64_t after, uint64_t upto,
+                        uint64_t *t_change)
+{
+    sl_shm_t *shm = sl->shm;
+    int i, found = 0;
+    uint64_t best = UINT64_MAX;
+
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        sl_part_t *p = &shm->part[i];
+        uint32_t head, k;
+        if (i == slot || !active(p)) {
+            continue;
+        }
+        head = atomic_load_explicit(&p->head, memory_order_acquire);
+        /* Eintraege vom neuesten rueckwaerts; der Ring enthaelt bis zu RING */
+        for (k = 0; k < SIMLINK_RING && k < head; k++) {
+            uint64_t t = p->ring[(head - 1 - k) % SIMLINK_RING].time_ps;
+            if (t <= after) {
+                break;
+            }
+            if (t <= upto && t < best) {
+                best = t;
+                found = 1;
+            }
+        }
+    }
+    if (found && t_change) {
+        *t_change = best;
+    }
+    return found;
+}

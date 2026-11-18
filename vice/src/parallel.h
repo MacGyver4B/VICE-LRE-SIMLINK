@@ -68,7 +68,6 @@ extern uint8_t parallel_bus;       /* data lines */
 
 /* simlink: externer Teilnehmer am IEEE-Bus (parallel-simlink.c) */
 void parallel_ext_notify(void);                 /* Leitungen von PET/Laufwerk geaendert */
-void parallel_ext_sync(CLOCK clk);              /* vor dem Lesen der IEEE-Leitungen */
 void parallel_ext_reset(void);                  /* Reset des Rechners (IFC) */
 void parallel_ext_set_bus(uint8_t b);           /* Datenleitungen des externen Teilnehmers */
 uint8_t parallel_bus_vice(void);                /* Datenleitungen ohne externen Teilnehmer */

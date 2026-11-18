@@ -66,11 +66,15 @@ static void tick(void)
     }
 }
 
+/* n us nichts tun: Fortschritt gleich um n us vorsetzen (Vorausschau),
+   erst am Ende den Bus lesen */
 static void wait_us(unsigned n)
 {
-    while (n--) {
-        tick();
+    if (n == 0) {
+        return;
     }
+    t_ps += (uint64_t)(n - 1) * step_ps;
+    tick();
 }
 
 static void lines(uint8_t pull)
@@ -91,18 +95,33 @@ static void pull_off(uint8_t m)
     lines((uint8_t)(my_pull & ~m));
 }
 
-/* wartet, bis (bus & m) == want; 0 = ok, -1 = Zeitueberschreitung */
+/* wartet, bis (bus & m) == want; 0 = ok, -1 = Zeitueberschreitung.
+   Statt jede Mikrosekunde nachzusehen, meldet der Rechner dem Bus: "ich
+   reagiere fruehestens eine Mikrosekunde nach der naechsten Aenderung" -
+   die anderen koennen bis dahin ohne Warten weiterrechnen. */
 static int wait_for(uint8_t m, uint8_t want, unsigned timeout_us)
 {
-    unsigned n = 0;
+    uint64_t deadline = timeout_us ? t_ps + (uint64_t)timeout_us * step_ps : 0;
+
+    tick();
     for (;;) {
-        tick();
+        uint64_t tc, t_new;
+        int changed;
+
         if ((bus & m) == want) {
             return 0;
         }
-        if (timeout_us && ++n >= timeout_us) {
+        if (deadline && t_ps >= deadline) {
             return -1;
         }
+        changed = simlink_wait_change(sl, slot, t_ps, m, step_ps, deadline, &tc);
+        t_new = changed ? tc + step_ps : deadline;
+        if (t_new < t_ps) {
+            t_new = t_ps;
+        }
+        simlink_wait_end(sl, slot, t_new);
+        t_ps = t_new - step_ps;
+        tick();
     }
 }
 

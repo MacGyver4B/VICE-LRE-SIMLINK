@@ -25,7 +25,7 @@
 extern "C" {
 #endif
 
-#define SIMLINK_VERSION      1
+#define SIMLINK_VERSION      2
 #define SIMLINK_MAX_PARTS    8
 #define SIMLINK_RING         64      /* Aenderungen je Teilnehmer im Ringpuffer */
 
@@ -129,6 +129,22 @@ uint8_t simlink_peek_others(simlink_t *sl, int slot, uint64_t t_ps, uint8_t *dat
    1 und *t_change, oder 0 */
 int simlink_next_change(simlink_t *sl, int slot, uint64_t after, uint64_t upto,
                         uint64_t *t_change);
+
+/* --- Warten auf eine Busaenderung (Vorausschau) ---
+   Der Teilnehmer erklaert: "Ich aendere meine Leitungen fruehestens react_ps
+   nach der naechsten Aenderung eines anderen, spaetestens bei deadline."
+   Die anderen duerfen bis dahin weiterrechnen, ohne auf ihn zu warten.
+
+   Wartet ab t_from, bis ein anderer Teilnehmer eine der Leitungen in mask
+   umschaltet (auch wenn ein dritter sie gleichzeitig festhaelt - der Aufrufer
+   prueft danach selbst); liefert 1 und *t_change (Zeit der Aenderung) oder 0,
+   wenn deadline erreicht ist
+   (deadline 0 = ohne Frist). Danach simlink_wait_end() mit einer neuen Zeit
+   >= t_change + react_ps bzw. >= deadline aufrufen, vor dem naechsten
+   simlink_set. */
+int simlink_wait_change(simlink_t *sl, int slot, uint64_t t_from, uint8_t mask,
+                        uint64_t react_ps, uint64_t deadline, uint64_t *t_change);
+void simlink_wait_end(simlink_t *sl, int slot, uint64_t t_now);
 
 /* Anzahl aktiver Teilnehmer ausser slot */
 int simlink_others(simlink_t *sl, int slot);

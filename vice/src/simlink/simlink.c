@@ -43,6 +43,9 @@ typedef struct {
     _Atomic uint64_t time_ps;   /* Fortschritt */
     _Atomic uint32_t head;      /* Anzahl geschriebener Eintraege (laeuft weiter) */
     _Atomic uint32_t flags;     /* SL_F_*, aktuell */
+    _Atomic uint64_t wait_until; /* != 0: wartet auf Aenderung, spaetestens bis hier */
+    _Atomic uint64_t react_ps;  /* beim Warten: fruehestens so lange nach einer Aenderung */
+    _Atomic uint32_t wait_mask; /* beim Warten: auf welche Leitungen */
     sl_entry_t ring[SIMLINK_RING];
 } sl_part_t;
 
@@ -247,6 +250,9 @@ int simlink_attach(simlink_t *sl, uint8_t type, int clockmaster)
     p->ring[0].state = 0;
     p->ring[0].pulses = 0;
     atomic_store(&p->head, 1);
+    atomic_store(&p->wait_until, 0);
+    atomic_store(&p->wait_mask, 0);
+    atomic_store(&p->react_ps, 0);
     atomic_store(&p->time_ps, start);
     sl->cur_state[slot] = 0;
     sl->cur_pulses[slot] = 0;
@@ -266,7 +272,8 @@ void simlink_detach(simlink_t *sl, int slot)
 }
 
 /* kleinste Fortschrittszeit der anderen aktiven Teilnehmer; *err bei ERROR */
-static uint64_t min_other(sl_shm_t *shm, int self, int *err)
+/* reiner Fortschritt (fuer das Freigeben von Ringeintraegen) */
+static uint64_t min_other_raw(sl_shm_t *shm, int self, int *err)
 {
     uint64_t m = UINT64_MAX;
     int i;
@@ -285,6 +292,104 @@ static uint64_t min_other(sl_shm_t *shm, int self, int *err)
             *err = 1;
         }
         t = atomic_load_explicit(&p->time_ps, memory_order_acquire);
+        if (t < m) {
+            m = t;
+        }
+    }
+    return m;
+}
+
+/* fruehestes Neues von q ab 'from', das die Leitungen in mask betrifft:
+   bekannter Eintrag >= from, in dem q eine dieser Leitungen umschaltet,
+   sonst sein Fortschritt (davor kommt nichts mehr) */
+static uint64_t next_activity(sl_part_t *q, uint64_t from, uint8_t mask, int *real)
+{
+    uint64_t prog = atomic_load_explicit(&q->time_ps, memory_order_acquire);
+    uint32_t head = atomic_load_explicit(&q->head, memory_order_acquire);
+    uint64_t best = prog > from ? prog : from;
+    uint32_t k;
+
+    if (real) {
+        *real = 0;
+    }
+    for (k = 0; k < SIMLINK_RING && k < head; k++) {
+        sl_entry_t *e = &q->ring[(head - 1 - k) % SIMLINK_RING];
+        uint64_t t = e->time_ps;
+        if (t < from) {
+            break;
+        }
+        if (t < best) {
+            /* Umschalten gegenueber dem Eintrag davor (ohne Vorgaenger: ja) */
+            int changed = 1;
+            if (k + 1 < SIMLINK_RING && k + 1 < head) {
+                sl_entry_t *pe = &q->ring[(head - 2 - k) % SIMLINK_RING];
+                changed = ((ST_PULL(e->state) ^ ST_PULL(pe->state)) & mask) != 0;
+            }
+            if (changed) {
+                best = t;
+                if (real) {
+                    *real = 1;
+                }
+            }
+        }
+    }
+    return best;
+}
+
+/* Zeit, vor der von p nichts mehr kommt: sein Fortschritt, oder - wenn er auf
+   eine Aenderung wartet - die naechste Aktivitaet eines anderen plus seine
+   Reaktionszeit (hoechstens seine Frist) */
+static uint64_t effective(sl_shm_t *shm, int pi)
+{
+    sl_part_t *p = &shm->part[pi];
+    uint64_t prog = atomic_load_explicit(&p->time_ps, memory_order_acquire);
+    uint64_t w = atomic_load_explicit(&p->wait_until, memory_order_acquire);
+    uint64_t react, c = UINT64_MAX, e;
+    uint8_t mask;
+    int i;
+
+    if (w == 0) {
+        return prog;
+    }
+    react = atomic_load_explicit(&p->react_ps, memory_order_acquire);
+    mask = (uint8_t)atomic_load_explicit(&p->wait_mask, memory_order_acquire);
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        uint64_t a;
+        if (i == pi || !active(&shm->part[i])) {
+            continue;
+        }
+        a = next_activity(&shm->part[i], prog, mask, NULL);
+        if (a < c) {
+            c = a;
+        }
+    }
+    e = (c > UINT64_MAX - react) ? UINT64_MAX : c + react;
+    if (e > w) {
+        e = w;
+    }
+    return e > prog ? e : prog;
+}
+
+/* wirksamer Fortschritt der anderen (mit Vorausschau wartender Teilnehmer) */
+static uint64_t min_other(sl_shm_t *shm, int self, int *err)
+{
+    uint64_t m = UINT64_MAX;
+    int i;
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        sl_part_t *p = &shm->part[i];
+        uint32_t f;
+        uint64_t t;
+        if (i == self) {
+            continue;
+        }
+        f = atomic_load_explicit(&p->flags, memory_order_acquire);
+        if (!(f & SL_F_ACTIVE)) {
+            continue;
+        }
+        if (f & SL_F_ERROR) {
+            *err = 1;
+        }
+        t = effective(shm, i);
         if (t < m) {
             m = t;
         }
@@ -316,7 +421,7 @@ static void append(simlink_t *sl, int slot, uint64_t t)
        Leser liegt; dann braucht niemand mehr den aelteren. */
     while (head >= SIMLINK_RING) {
         int err = 0;
-        uint64_t m = min_other(shm, slot, &err);
+        uint64_t m = min_other_raw(shm, slot, &err);
         if (m == UINT64_MAX || err
             || p->ring[(head - SIMLINK_RING + 1) % SIMLINK_RING].time_ps < m) {
             break;
@@ -551,4 +656,65 @@ int simlink_next_change(simlink_t *sl, int slot, uint64_t after, uint64_t upto,
         *t_change = best;
     }
     return found;
+}
+
+int simlink_wait_change(simlink_t *sl, int slot, uint64_t t_from, uint8_t mask,
+                        uint64_t react_ps, uint64_t deadline, uint64_t *t_change)
+{
+    sl_shm_t *shm = sl->shm;
+    sl_part_t *me = &shm->part[slot];
+    uint64_t dl = deadline ? deadline : UINT64_MAX - 1;
+    unsigned n = 0;
+    int waited = 0;
+
+    /* erst Reaktionszeit, Leitungen und Fortschritt, dann das Wartezeichen */
+    atomic_store_explicit(&me->react_ps, react_ps, memory_order_release);
+    atomic_store_explicit(&me->wait_mask, mask, memory_order_release);
+    simlink_progress(sl, slot, t_from);
+    atomic_store_explicit(&me->wait_until, dl, memory_order_release);
+
+    for (;;) {
+        int err = 0, i;
+        uint64_t m = min_other(shm, slot, &err);
+        uint64_t best = UINT64_MAX;
+
+        /* fruehestes Umschalten einer beobachteten Leitung bei einem anderen
+           ab t_from; endgueltig ist es, wenn es vor m liegt */
+        for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+            uint64_t a;
+            int real = 0;
+            if (i == slot || !active(&shm->part[i])) {
+                continue;
+            }
+            a = next_activity(&shm->part[i], t_from, mask, &real);
+            if (real && a < best) {
+                best = a;
+            }
+        }
+        if (best < m && best < dl) {
+            if (waited) {
+                sl->waits++;
+            }
+            *t_change = best;
+            return 1;
+        }
+        if (m >= dl || err) {
+            if (waited) {
+                sl->waits++;
+            }
+            *t_change = dl;
+            return 0;
+        }
+        waited = 1;
+        spin(&n);
+    }
+}
+
+void simlink_wait_end(simlink_t *sl, int slot, uint64_t t_now)
+{
+    sl_part_t *me = &sl->shm->part[slot];
+    /* erst den neuen Fortschritt, dann das Wartezeichen loeschen: so faellt
+       der fuer die anderen sichtbare Fortschritt nie zurueck */
+    simlink_progress(sl, slot, t_now);
+    atomic_store_explicit(&me->wait_until, 0, memory_order_release);
 }

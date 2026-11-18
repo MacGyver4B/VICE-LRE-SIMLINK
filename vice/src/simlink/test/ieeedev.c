@@ -27,6 +27,13 @@ static uint64_t t_ps = 0;
 static uint64_t step_ps = 1000000;   /* 1 us */
 static int verbose = 0;
 static int unit = 8;
+/* Testoptionen fuer das Zeitverhalten des PET */
+static unsigned hold_us = 0;        /* -H: NRFD vor jedem Byte unter ATN so lange halten */
+static unsigned first_us = 0;       /* -D: als Sprecher vor dem ersten Byte warten */
+static unsigned gap_us = 0;         /* -G: als Sprecher vor jedem weiteren Byte warten */
+static unsigned hold_data_us = 0;   /* -N: NRFD vor jedem Datenbyte (ohne ATN) halten */
+static unsigned ack_us = 0;         /* -A: NDAC nach DAV so lange halten (Quittung verzoegern) */
+static int talk_started = 0;
 static volatile sig_atomic_t stop = 0;
 
 static uint8_t my_pull = 0, my_data = 0;
@@ -150,9 +157,22 @@ static void do_close(int sa)
 /* ---- Handshake -------------------------------------------------------- */
 
 /* ein Byte empfangen; liefert -1 wenn ATN-Wechsel abbricht */
+static void pause_us(unsigned n)
+{
+    if (n) {
+        t_ps += (uint64_t)(n - 1) * step_ps;
+        tick();
+    }
+}
+
 static int listen_byte(int under_atn, int *eoi)
 {
     int b;
+    if (under_atn ? hold_us : hold_data_us) {
+        /* nicht bereit: NRFD und NDAC halten (der PET wartet ohne Frist) */
+        drive((uint8_t)(my_pull | SL_IEEE_NDAC | SL_IEEE_NRFD), 0);
+        pause_us(under_atn ? hold_us : hold_data_us);
+    }
     /* bereit: NRFD frei, NDAC gezogen */
     drive((uint8_t)((my_pull | SL_IEEE_NDAC) & ~SL_IEEE_NRFD & ~SL_IEEE_DAV & ~SL_IEEE_EOI), 0);
     for (int first = 1;; first = 0) {
@@ -169,6 +189,9 @@ static int listen_byte(int under_atn, int *eoi)
         }
     }
     pull_on(SL_IEEE_NRFD);
+    if (!under_atn && ack_us) {
+        pause_us(ack_us);          /* Quittung (NDAC frei) verzoegern */
+    }
     b = bus_data;
     *eoi = LOW(SL_IEEE_EOI) ? 1 : 0;
     pull_off(SL_IEEE_NDAC);
@@ -192,6 +215,8 @@ static int listen_byte(int under_atn, int *eoi)
 /* ein Byte senden; liefert -1 bei ATN */
 static int talk_byte(int b, int eoi)
 {
+    pause_us(talk_started ? gap_us : first_us);
+    talk_started = 1;
     /* warten, bis alle Hoerer bereit (NRFD frei) */
     for (int first = 1;; first = 0) {
         if (first) {
@@ -236,18 +261,23 @@ int main(int argc, char **argv)
     int namelen = 0;
     unsigned long nbytes = 0;
 
-    while ((c = getopt(argc, argv, "u:s:v")) != -1) {
+    while ((c = getopt(argc, argv, "u:s:vH:D:G:N:A:")) != -1) {
         switch (c) {
         case 'u': unit = atoi(optarg); break;
         case 's': step_ps = (uint64_t)atoll(optarg) * 1000; break;
         case 'v': verbose++; break;
+        case 'H': hold_us = (unsigned)atoi(optarg); break;
+        case 'D': first_us = (unsigned)atoi(optarg); break;
+        case 'G': gap_us = (unsigned)atoi(optarg); break;
+        case 'N': hold_data_us = (unsigned)atoi(optarg); break;
+        case 'A': ack_us = (unsigned)atoi(optarg); break;
         default:
-            fprintf(stderr, "usage: ieeedev [-u unit] [-s step_ns] [-v] bus\n");
+            fprintf(stderr, "usage: ieeedev [-u unit] [-s step_ns] [-H us] [-D us] [-G us] [-v] bus\n");
             return 2;
         }
     }
     if (optind >= argc) {
-        fprintf(stderr, "usage: ieeedev [-u unit] [-s step_ns] [-v] bus\n");
+        fprintf(stderr, "usage: ieeedev [-u unit] [-s step_ns] [-H us] [-D us] [-G us] [-v] bus\n");
         return 2;
     }
     signal(SIGINT, on_sig);
@@ -335,6 +365,9 @@ int main(int argc, char **argv)
                 nbytes++;
             }
             continue;
+        }
+        if (role != TALKER) {
+            talk_started = 0;
         }
         if (role == TALKER) {
             /* Umschaltung: Rechner gibt ATN frei und wird Hoerer */

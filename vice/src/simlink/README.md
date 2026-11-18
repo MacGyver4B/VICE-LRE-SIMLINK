@@ -147,6 +147,34 @@ cc -O2 -std=c11 -I. -o ieeedev test/ieeedev.c simlink.c -lpthread
 xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
 ```
 
+Relais zwischen beiden Bussen (Durchreichen auf Protokollebene, ohne
+eigenes DOS): Geraet am IEEE-Bus, Rechner am IEC-Bus.
+
+```
+cc -O2 -std=c11 -I. -o relay test/relay.c simlink.c -lpthread
+./relay [-u ieee_geraet] [-d iec_laufwerk] [-w anlauf_s] [-v] pet1 iec1 &
+xdrive -iecsimlink iec1 -8 disk.d64 &
+xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
+```
+
+- Schreibdaten (OPEN-Name, Befehle, SAVE) nimmt das Relais sofort an und
+  reicht sie bei UNLISTEN weiter; dabei haelt es NRFD, der PET wartet ohne
+  Zeitgrenze.
+- Lesekanaele holt es vor dem Annehmen des Sekundaerbefehls nach TALK
+  (NRFD gehalten) ganz von der IEC-Seite (bis 64 KB). Keine Daten: es
+  schweigt, der PET meldet ?FILE NOT FOUND.
+- Wartet es am IEEE-Bus, zieht es die IEC-Seite in 1-ms-Schritten mit,
+  damit das Laufwerk weiterarbeiten kann (z. B. Verzeichniseintrag nach
+  CLOSE).
+- xdrive im Test nicht per kill beenden, sondern mit -limitcycles: sonst
+  schreibt VICE die letzte Spur nicht zurueck.
+
+Gesamttest: `test/check.sh [VICE-Baum]` (Bibliothek, IEEE, IEEE gemischt,
+IEC, Relais; jeweils zwei Laeufe mit Vergleich).
+
+- Relais (xpet + relay + xdrive mit 1541): Verzeichnis, LOAD 5013 Bytes,
+  SAVE bytegleich, GET# einer Datei bis EOI (ST 64), Fehlerkanal mit
+  62,FILE NOT FOUND nach fehlender Datei; zwei Laeufe mit gleichem Ablauf.
 - IEEE-Handshake zwischen zwei Prozessen (Talker 1 MHz, Listener 2 MHz), 20 000 Bytes, fünf Läufe: keine Fehler, alle Impulse, emulierte Zeit in jedem Lauf identisch (79,999 ms), etwa 1,7-mal schneller als Echtzeit bei Lesen in jedem Takt.
 - Ringpuffer: Impulse in jedem Takt, Leser liest nur alle 1/50/200 Takte – alle 5000 Impulse und alle Datenwerte kommen richtig an.
 

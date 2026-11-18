@@ -1,5 +1,6 @@
 #!/bin/sh
-# Gesamttest simlink: IEEE (xpet + ieeedev) und IEC (xdrive + iechost).
+# Gesamttest simlink: IEEE (xpet + ieeedev), IEC (xdrive + iechost) und
+# Relais (xpet + relay + xdrive).
 #
 #   src/simlink/test/check.sh [VICE-Baumverzeichnis]   (Standard: ../../..)
 #
@@ -21,6 +22,7 @@ bad()  { echo "  FEHLER $*"; FAIL=1; }
 cc -O2 -std=c11 -I"$SL" -o "$WORK/sltest"  "$SL/test/sltest.c"  "$SL/simlink.c" -lpthread || exit 1
 cc -O2 -std=c11 -I"$SL" -o "$WORK/ieeedev" "$SL/test/ieeedev.c" "$SL/simlink.c" -lpthread || exit 1
 cc -O2 -std=c11 -I"$SL" -o "$WORK/iechost" "$SL/test/iechost.c" "$SL/simlink.c" -lpthread || exit 1
+cc -O2 -std=c11 -I"$SL" -o "$WORK/relay"   "$SL/test/relay.c"   "$SL/simlink.c" -lpthread || exit 1
 
 cd "$WORK" || exit 1
 
@@ -105,6 +107,39 @@ for i in 1 2; do
 done
 if cmp -s iec1.trace iec2.trace; then ok "Busspuren gleich ($(wc -l < iec1.trace) Wechsel)"; else bad "Busspuren verschieden"; fi
 shm_rm chkiec
+
+echo "Relais (xpet + relay + xdrive mit 1541):"
+# LOAD, SAVE, Fehlerkanal nach fehlender Datei. xdrive endet von selbst,
+# damit VICE die Spur zurueckschreibt (sonst fehlt der Verzeichniseintrag).
+for i in 1 2; do
+    shm_rm chkri; shm_rm chkrc
+    cp disk.d64 rel$i.d64
+    "$WORK/relay" -v chkri chkrc > rel$i.trace 2>&1 &
+    R=$!
+    sleep 0.3
+    timeout 900 "$SRC/xdrive" -default -directory "$DATA" +sound -iecsimlink chkrc \
+        -8 rel$i.d64 -warp -limitcycles 48000000 > reld$i.log 2>&1 &
+    X=$!
+    sleep 0.3
+    timeout 900 "$SRC/xpet" -default -directory "$DATA" +sound -model 4032 -drive8type 0 \
+        +busdevice8 -ieeesimlink chkri -warp -limitcycles 45000000 \
+        -keybuf 'load"big",8\nsave"neu",8\n10 open1,8,15:input#1,a,b$:close1\nload"nix",8\nrun\n' \
+        > relp$i.log 2>&1
+    wait $X
+    sleep 0.5
+    kill $R 2>/dev/null
+    wait $R 2>/dev/null
+    rm -f neu$i
+    "$SRC/c1541" rel$i.d64 -read neu neu$i >/dev/null 2>&1
+    if cmp -s big neu$i && grep -q "LOAD) geholt: $(wc -c < big) Bytes" rel$i.trace \
+       && grep -q "Kanal 15 geholt: 25 Bytes" rel$i.trace; then
+        ok "Lauf $i: LOAD, SAVE bytegleich, Fehlerkanal nach FILE NOT FOUND"
+    else
+        bad "Lauf $i"; grep -v "ATN" rel$i.trace
+    fi
+done
+if cmp -s rel1.trace rel2.trace; then ok "Relais-Ablauf gleich ($(wc -l < rel1.trace) Zeilen)"; else bad "Relais-Ablauf verschieden"; fi
+shm_rm chkri; shm_rm chkrc
 
 if [ $FAIL = 0 ]; then
     echo "Alle Tests bestanden."

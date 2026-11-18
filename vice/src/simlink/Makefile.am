@@ -21,5 +21,7 @@ EXTRA_DIST = \
 	README.md \
 	test/ieeedev.c \
 	test/iechost.c \
+	test/relay.c \
+	test/check.sh \
 	test/sltest.c \
 	test/run.sh

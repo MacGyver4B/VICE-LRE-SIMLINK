@@ -63,7 +63,8 @@ static alarm_t *sl_alarm = NULL;
 
 static uint64_t hz = 1000000;       /* Takt des Rechners */
 static int64_t base_ps = 0;         /* simlink-Zeit = base + Takt * 1e12 / hz */
-static uint64_t done_ps = 0;        /* bis hierher abgeglichen (= Fortschritt) */
+static uint64_t done_ps = 0;
+static int start_pending = 0;   /* Startzustand der anderen noch uebernehmen */        /* bis hierher abgeglichen (= Fortschritt) */
 static int in_sync = 0;
 static uint8_t pub_pull = 0;        /* zuletzt veroeffentlicht */
 static uint64_t pub_ps = 0;
@@ -238,6 +239,13 @@ static void ext_sync(CLOCK clk)
             m = simlink_wait_peers(sl, sl_slot, done_ps + 1);
         }
         upto = (m - 1 < target) ? m - 1 : target;
+        /* Ein Eintrag genau zur Startzeit faellt sonst durch, weil
+           simlink_next_change erst danach zaehlt. Hier ist m > done_ps,
+           der Zustand bei done_ps also endgueltig. */
+        if (start_pending) {
+            start_pending = 0;
+            apply_ext(done_ps, ps2m_floor(done_ps));
+        }
 
         /* Aenderungen des externen Rechners der Reihe nach einspeisen */
         while (simlink_next_change(sl, sl_slot, done_ps, upto, &tc)) {
@@ -345,6 +353,8 @@ static void sl_start(void)
     iecbus_ext_machine->host_write(0, maincpu_clk);
     publish(done_ps);
     simlink_progress(sl, sl_slot, done_ps);
+    /* Zustand der anderen zur Startzeit beim ersten Abgleich uebernehmen */
+    start_pending = 1;
 
     drive_ext_iec_changed = iecbus_ext_drive_changed;
     drive_ext_exact = 1;

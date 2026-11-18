@@ -64,7 +64,8 @@ static uint8_t ext_srq = 0;
 /* Zeit wie beim IEC-Teilnehmer: simlink-Zeit = base + Takt * 1e12 / hz */
 static uint64_t hz = 1000000;
 static int64_t base_ps = 0;
-static uint64_t done_ps = 0;        /* bis hierher abgeglichen */
+static uint64_t done_ps = 0;
+static int start_pending = 0;   /* Startzustand der anderen noch uebernehmen */        /* bis hierher abgeglichen */
 static int in_sync = 0;
 static uint8_t pub_pull = 0, pub_data = 0;
 static uint64_t pub_ps = 0;
@@ -294,6 +295,13 @@ static void parallel_ext_sync(CLOCK clk)
             m = simlink_wait_peers(sl, sl_slot, done_ps + 1);
         }
         upto = (m - 1 < target) ? m - 1 : target;
+        /* Ein Eintrag genau zur Startzeit faellt sonst durch, weil
+           simlink_next_change erst danach zaehlt. Hier ist m > done_ps,
+           der Zustand bei done_ps also endgueltig. */
+        if (start_pending) {
+            start_pending = 0;
+            apply_ext(done_ps, ps2m_floor(done_ps));
+        }
 
         while (simlink_next_change(sl, sl_slot, done_ps, upto, &tc)) {
             CLOCK c = ps2m_floor(tc);
@@ -392,6 +400,8 @@ static void sl_start(void)
     ext_valid = 0;
     publish(done_ps);
     simlink_progress(sl, sl_slot, done_ps);
+    /* Zustand der anderen zur Startzeit beim ersten Abgleich uebernehmen */
+    start_pending = 1;
 
     if (!sl_alarm) {
         sl_alarm = alarm_new(maincpu_alarm_context, "Simlink", sl_alarm_handler, NULL);

@@ -15,8 +15,10 @@
  *   ueber IEC holen; danach sofort liefern. Keine Daten (Datei fehlt): nichts
  *   liefern, der PET meldet nach 65 ms ?FILE NOT FOUND.
  *
- * Vereinfachung dieses Tests: ein Lesekanal wird beim ersten TALK ganz geholt
- * (bis 64 KB), Schreibdaten werden bis UNLISTEN gesammelt.
+ * Daten laufen in Portionen bis 254 Bytes: Lesen per TALK ... UNTALK, die
+ * naechste Portion erst, wenn die vorige ausgeliefert ist; Schreiben per
+ * LISTEN ... UNLISTEN, das letzte Byte mit EOI. Mit -v steht jede Portion im
+ * Log, mit -v -v zusaetzlich jedes Byte unter ATN.
  *
  * Zeit: eine gemeinsame Uhr; je Bus ein fester Versatz (Startzeit). Waehrend
  * das Relais auf einem Bus arbeitet, steht die Zeit des anderen Busses - dessen
@@ -280,7 +282,11 @@ static int c_recv(int *eoi)
 }
 
 /* Kanal sa ganz lesen (TALK ... EOI ... UNTALK); liefert Anzahl */
-static size_t c_read_channel(int sa, unsigned char *buf, size_t max)
+/* Kanal sa lesen: TALK, bis EOI oder max Bytes, UNTALK. *got_eoi = 1, wenn
+   das letzte Byte EOI trug. Ohne EOI hoert der Rechner nach max Bytes per
+   UNTALK auf; beim naechsten TALK liefert die Floppy an derselben Stelle
+   weiter. */
+static size_t c_read_channel(int sa, unsigned char *buf, size_t max, int *got_eoi)
 {
     size_t n = 0;
     int eoi = 0, b;
@@ -297,24 +303,30 @@ static size_t c_read_channel(int sa, unsigned char *buf, size_t max)
     if (c_wait(CLK_C, CLK_C, 2000) < 0) {
         iec_err = 1;
     } else {
-        while (!eoi) {
+        while (!eoi && n < max) {
             b = c_recv(&eoi);
             if (b < 0) {
                 break;
             }
-            if (n < max) {
-                buf[n++] = (unsigned char)b;
-            }
+            buf[n++] = (unsigned char)b;
         }
+        /* Quittung des letzten Bytes (DATA low) stehen lassen, bis der
+           Sprecher sie sicher gesehen hat; sonst sendet er es beim naechsten
+           TALK noch einmal */
+        wait_us(&C, 100);
     }
     if (c_atn(0x5f, -1) == 0) {
         c_atn_end();
     }
     c_off(CLK_C | DATA_C);
+    *got_eoi = eoi;
     return n;
 }
 
-static void c_write(int sec, const unsigned char *s, size_t n)
+/* LISTEN sec, n Bytes, UNLISTEN; EOI auf dem letzten Byte nur mit eoi_last.
+   Ohne EOI schreibt die Floppy beim naechsten LISTEN auf denselben Kanal
+   einfach weiter. */
+static void c_write(int sec, const unsigned char *s, size_t n, int eoi_last)
 {
     size_t i;
     if (verbose > 1) {
@@ -325,7 +337,7 @@ static void c_write(int sec, const unsigned char *s, size_t n)
         return;
     }
     for (i = 0; i < n; i++) {
-        if (c_send(s[i], i + 1 == n) < 0) {
+        if (c_send(s[i], eoi_last && i + 1 == n) < 0) {
             fprintf(stderr, "relay: IEC Senden abgebrochen bei Byte %lu\n", (unsigned long)i);
             iec_err = 1;
             break;
@@ -348,8 +360,11 @@ static void i_off(uint8_t m) { i_drive((uint8_t)(I.pull & ~m), I.data); }
 static unsigned char *cbuf[16];
 static size_t clen[16], cpos[16];
 static int cvalid[16];
+static int ceof[16];                /* Dateiende von der IEC-Seite gesehen */
+static unsigned long ctotal[16];    /* bisher von der IEC-Seite geholt */
 static unsigned char wbuf[BUFMAX];
 static size_t wlen = 0;
+static unsigned long wtotal = 0;    /* schon weitergereichte Schreibdaten */
 static unsigned char name[256];
 static size_t namelen = 0;
 static int opening = -1, talk_pending = 0;
@@ -362,22 +377,44 @@ static void log_msg(const char *fmt, const char *a, long v)
 }
 
 /* Lesekanal bereitstellen (vor dem Annehmen des TALK-Sekundaerbefehls) */
+#define CHUNK 254
+
 static void prefetch(int sa)
 {
-    /* Datenkanal: einmal holen (danach Dateiende). Fehlerkanal: neu holen,
-       wenn verbraucht oder nach einem Befehl (cvalid[15] = 0) - GET# liest
-       mit eigenem TALK je Byte, z. B. die Antwort auf M-R. */
-    if (cvalid[sa] && (sa != 15 || cpos[sa] < clen[sa])) {
+    int eoi = 0;
+    const char *what = sa == 15 ? "15" : (sa == 0 ? "0 (LOAD)" : "n");
+
+    /* Fehlerkanal: neu holen, wenn verbraucht oder nach einem Befehl
+       (cvalid[15] = 0) - GET# liest mit eigenem TALK je Byte, z. B. die
+       Antwort auf M-R. Datenkanal: in Portionen bis CHUNK Bytes, die naechste
+       erst, wenn die vorige ausgeliefert ist; danach Dateiende. */
+    if (cvalid[sa] && cpos[sa] < clen[sa]) {
+        return;
+    }
+    if (sa != 15 && cvalid[sa] && ceof[sa]) {
         return;
     }
     if (!cbuf[sa]) {
         cbuf[sa] = malloc(BUFMAX);
     }
+    if (!cvalid[sa]) {
+        ctotal[sa] = 0;
+    }
     iec_err = 0;
-    clen[sa] = c_read_channel(sa, cbuf[sa], BUFMAX);
+    clen[sa] = c_read_channel(sa, cbuf[sa], sa == 15 ? BUFMAX : CHUNK, &eoi);
     cpos[sa] = 0;
     cvalid[sa] = 1;
-    log_msg("Kanal %s geholt: %ld Bytes", sa == 15 ? "15" : (sa == 0 ? "0 (LOAD)" : "n"), (long)clen[sa]);
+    ctotal[sa] += clen[sa];
+    /* Fehlerkanal immer ganz; Datenkanal: Ende bei EOI, bei weniger als einer
+       Portion (Abbruch) oder wenn gar nichts kam (Datei fehlt) */
+    ceof[sa] = (sa == 15 || eoi || clen[sa] < CHUNK);
+    if (ceof[sa]) {
+        fprintf(stderr, "relay %10.3f ms: Kanal %s geholt: %lu Bytes%s\n", (double)t / 1e9,
+                what, ctotal[sa], (sa == 15 || eoi || ctotal[sa] == 0) ? "" : " (ohne EOI abgebrochen)");
+    } else if (verbose) {
+        fprintf(stderr, "relay %10.3f ms: Kanal %s: %lu Bytes bisher\n", (double)t / 1e9,
+                what, ctotal[sa]);
+    }
 }
 
 /* ein Byte empfangen; -1 bei ATN-Wechsel */
@@ -452,7 +489,7 @@ static void finish_listen(int sa)
 {
     if (opening >= 0) {
         log_msg("OPEN %s (Kanal %ld)", "", opening);
-        c_write(0xf0 | opening, name, namelen);
+        c_write(0xf0 | opening, name, namelen, 1);
         cvalid[opening] = 0;
         if (namelen) {
             cvalid[15] = 0;     /* OPEN mit Namen setzt den Fehlerkanal neu */
@@ -460,10 +497,11 @@ static void finish_listen(int sa)
         opening = -1;
     } else if (wlen) {
         iec_err = 0;
-        c_write(0x60 | sa, wbuf, wlen);
+        c_write(0x60 | sa, wbuf, wlen, 1);
         fprintf(stderr, "relay %10.3f ms: Daten an Kanal %d weitergereicht: %lu Bytes%s\n",
-                (double)t / 1e9, sa, (unsigned long)wlen, iec_err ? " (FEHLER)" : "");
+                (double)t / 1e9, sa, wtotal + (unsigned long)wlen, iec_err ? " (FEHLER)" : "");
         wlen = 0;
+        wtotal = 0;
         if (sa == 15) {
             cvalid[15] = 0;     /* Befehl: Fehlerkanal neu holen */
         }
@@ -543,7 +581,7 @@ usage:
             if (b < 0) {
                 continue;
             }
-            if (verbose) {
+            if (verbose > 1) {
                 fprintf(stderr, "relay: ATN $%02X\n", b);
             }
             if (b == 0x20 + ieee_unit) {
@@ -565,6 +603,7 @@ usage:
             } else if (role != IDLE && (b & 0xf0) == 0x60) {
                 sa = b & 0x0f;
                 wlen = 0;
+                wtotal = 0;
             } else if (role != IDLE && (b & 0xf0) == 0xf0) {
                 sa = b & 0x0f;
                 opening = sa;
@@ -589,11 +628,32 @@ usage:
                 }
             } else if (wlen < BUFMAX) {
                 wbuf[wlen++] = (unsigned char)b;
+                /* Schreibdaten (nicht Befehle) in Portionen weiterreichen,
+                   dabei NRFD halten. Ein Byte bleibt zurueck, damit das
+                   letzte bei UNLISTEN mit EOI rausgeht. */
+                if (sa != 15 && wlen == CHUNK + 1) {
+                    c_write(0x60 | sa, wbuf, CHUNK, 0);
+                    wtotal += CHUNK;
+                    wbuf[0] = wbuf[CHUNK];
+                    wlen = 1;
+                    if (verbose) {
+                        fprintf(stderr, "relay %10.3f ms: Kanal %d: %lu Bytes geschrieben bisher\n",
+                                (double)t / 1e9, sa, wtotal);
+                    }
+                    tick(&I);
+                }
             }
             continue;
         }
         if (role == TALKER) {
             i_drive((uint8_t)(I.pull & ~(SL_IEEE_NDAC | SL_IEEE_NRFD)), 0);
+            if (cvalid[sa] && cpos[sa] >= clen[sa] && !ceof[sa]) {
+                /* naechste Portion holen; der PET wartet derweil auf DAV
+                   (im Test steht seine Zeit, solange das Relais am IEC-Bus
+                   arbeitet) */
+                prefetch(sa);
+                tick(&I);
+            }
             if (!cvalid[sa] || cpos[sa] >= clen[sa]) {
                 /* nichts zu liefern: schweigen, der PET meldet den Fehler */
                 if (!LOW(SL_IEEE_ATN)) {
@@ -601,9 +661,9 @@ usage:
                 }
                 continue;
             }
-            if (i_talk_byte(cbuf[sa][cpos[sa]], cpos[sa] + 1 == clen[sa]) == 0) {
+            if (i_talk_byte(cbuf[sa][cpos[sa]], cpos[sa] + 1 == clen[sa] && ceof[sa]) == 0) {
                 cpos[sa]++;
-                if (cpos[sa] >= clen[sa]) {
+                if (cpos[sa] >= clen[sa] && ceof[sa]) {
                     role = IDLE;
                 }
             }

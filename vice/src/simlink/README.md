@@ -161,8 +161,13 @@ xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
   reicht sie bei UNLISTEN weiter; dabei haelt es NRFD, der PET wartet ohne
   Zeitgrenze.
 - Lesekanaele holt es vor dem Annehmen des Sekundaerbefehls nach TALK
-  (NRFD gehalten) ganz von der IEC-Seite (bis 64 KB). Keine Daten: es
-  schweigt, der PET meldet ?FILE NOT FOUND.
+  (NRFD gehalten) von der IEC-Seite, in Portionen bis 254 Bytes (TALK ...
+  UNTALK, die Floppy liefert beim naechsten TALK weiter). Keine Daten: es
+  schweigt, der PET meldet ?FILE NOT FOUND. Schreibdaten gehen ebenso in
+  Portionen weiter. Mit -v steht der Fortschritt im Log, so laesst sich ein
+  langer Test frueh abbrechen.
+- Nach dem letzten Byte einer Portion haelt es die Quittung (DATA low) noch
+  100 us, sonst sendet die 1541 dieses Byte beim naechsten TALK erneut.
 - Wartet es am IEEE-Bus, zieht es die IEC-Seite in 1-ms-Schritten mit,
   damit das Laufwerk weiterarbeiten kann (z. B. Verzeichniseintrag nach
   CLOSE).
@@ -178,7 +183,8 @@ IEC, Relais; jeweils zwei Laeufe mit Vergleich).
   Derselbe Test direkt (xpet + 2031, x64sc + 1541) liefert ebenfalls das
   jeweilige ROM bytegleich.
 - Relais (xpet + relay + xdrive mit 1541): Verzeichnis, LOAD 5013 Bytes,
-  SAVE bytegleich, GET# einer Datei bis EOI (ST 64), Fehlerkanal mit
+  SAVE bytegleich, 30 KB LOAD und SAVE in Portionen bytegleich, GET#
+  einer Datei bis EOI (ST 64), Fehlerkanal mit
   62,FILE NOT FOUND nach fehlender Datei; zwei Laeufe mit gleichem Ablauf.
 - IEEE-Handshake zwischen zwei Prozessen (Talker 1 MHz, Listener 2 MHz), 20 000 Bytes, fünf Läufe: keine Fehler, alle Impulse, emulierte Zeit in jedem Lauf identisch (79,999 ms), etwa 1,7-mal schneller als Echtzeit bei Lesen in jedem Takt.
 - Ringpuffer: Impulse in jedem Takt, Leser liest nur alle 1/50/200 Takte – alle 5000 Impulse und alle Datenwerte kommen richtig an.

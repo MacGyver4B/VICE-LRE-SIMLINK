@@ -34,7 +34,6 @@ libcore_a_SOURCES = \
 	m93c86.h \
 	riotcore.c \
 	ser-eeprom.c \
-	simlink-lib.c \
 	ser-eeprom.h \
 	scsi.c \
 	scsi.h \

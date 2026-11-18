@@ -38,6 +38,7 @@ else
 SUBDIRS = \
 	@RESID_DIR@ \
 	@RESID_DTV_DIR@ \
+	simlink \
 	joyport \
 	drive \
 	vdrive \
@@ -82,6 +83,7 @@ SUBDIRS = \
 endif
 
 DIST_SUBDIRS = \
+	simlink \
 	joyport \
 	drive \
 	vdrive \
@@ -585,6 +587,7 @@ mididrv_lib = $(top_builddir)/src/arch/shared/mididrv/libmididrv.a
 monitor_lib = $(top_builddir)/src/monitor/libmonitor.a
 p64_lib = $(top_builddir)/src/lib/p64/libp64.a
 parallel_lib = $(top_builddir)/src/parallel/libparallel.a
+simlink_lib = $(top_builddir)/src/simlink/libsimlink.a
 pet_lib = $(top_builddir)/src/pet/libpet.a
 petstubs_lib = $(top_builddir)/src/pet/libpetstubs.a
 plus4_lib = $(top_builddir)/src/plus4/libplus4.a
@@ -636,7 +639,7 @@ resid_dtv_libs = @RESID_DTV_LIBS@
 # external libraries required for all emulators
 emu_extlibs = @UI_LIBS@ @SDL_EXTRA_LIBS@ @SOUND_LIBS@ @JOY_LIBS@ @GFXOUTPUT_LIBS@ @ZLIB_LIBS@ @DYNLIB_LIBS@ @ARCH_LIBS@ $(archdep_lib) $(linenoise_ng_lib)
 
-driver_libs = $(joyport_lib) $(samplerdrv_lib) $(sounddrv_lib) $(mididrv_lib) $(socketdrv_lib) $(hwsiddrv_lib) $(gfxoutputdrv_lib) $(printerdrv_lib) $(diskimage_lib) $(fsdevice_lib) $(tape_lib) $(fileio_lib) $(serial_lib) $(core_lib)
+driver_libs = $(simlink_lib) $(joyport_lib) $(samplerdrv_lib) $(sounddrv_lib) $(mididrv_lib) $(socketdrv_lib) $(hwsiddrv_lib) $(gfxoutputdrv_lib) $(printerdrv_lib) $(diskimage_lib) $(fsdevice_lib) $(tape_lib) $(fileio_lib) $(serial_lib) $(core_lib)
 
 if HAVE_USBSID
 driver_libs += $(usbsiddrv_lib)

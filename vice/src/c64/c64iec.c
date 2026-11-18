@@ -131,6 +131,7 @@ void iec_update_ports(void)
     for (unit = 4; unit < 8 + NUM_DISK_UNITS; unit++) {
         iecbus.cpu_port &= iecbus.drv_bus[unit];
     }
+    iecbus.cpu_port &= iecbus_ext_dev_bus;      /* simlink: externes Geraet */
 
     iecbus.drv_port = (((iecbus.cpu_port >> 4) & 0x4) | (iecbus.cpu_port >> 7) | ((iecbus.cpu_bus << 3) & 0x80));
 

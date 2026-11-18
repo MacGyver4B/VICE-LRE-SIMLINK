@@ -174,6 +174,28 @@ xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
 - xdrive im Test nicht per kill beenden, sondern mit -limitcycles: sonst
   schreibt VICE die letzte Spur nicht zurueck.
 
+Gegenrichtung (`relay -r`): Rechner (C64) am IEC-Bus, Laufwerk am IEEE-Bus.
+x64sc bleibt dabei am IEC-Bus; das Relais haengt dort als Geraet
+(`-iecsimlinkdevice`). Am IEEE-Bus ist es Controller, z. B. einer 8250 in
+xpet, deren PET ruht.
+
+```
+./relay -r -v pet1 iec1 &
+xpet -drive8type 8250 -drive8truedrive -8 disk.d82 -ieeesimlink pet1 &
+x64sc -drive8type 0 +busdevice8 -iecsimlink iec1 -iecsimlinkdevice
+```
+
+- Am IEC-Bus haelt das Relais als Sprecher den Start (CLK low) 150 us und
+  jede Bitphase mindestens 80 us: ACPTR liest $DD00 doppelt und kann dabei
+  von einer Badline (bis 47 Takte) aufgehalten werden; kuerzere Phasen
+  verpasst der C64 gelegentlich und zaehlt dann ein Bit zu wenig.
+- Unter ATN erst warten, bis der C64 auch CLK gezogen hat (er zieht ATN
+  einige us vor CLK), sonst gibt das Relais DATA zu frueh frei ("device not
+  present").
+- Schreibdaten gehen am IEEE-Bus in EINER Sitzung (LISTEN ... UNLISTEN) wie
+  beim PET; ein neues LISTEN je 254 Bytes fiel bei der 8250 auf das Schreiben
+  des vollen Blocks, danach gab sie NRFD nicht mehr frei.
+
 Gesamttest: `test/check.sh [VICE-Baum]` (Bibliothek, IEEE, IEEE gemischt,
 IEC, Relais; jeweils zwei Laeufe mit Vergleich).
 

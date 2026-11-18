@@ -14,6 +14,12 @@
  * Ressourcen: "IECSimlink" (Busname, leer = aus), "IECSimlinkStep" (Abgleich
  * spaetestens alle n Takte des Rechners).
  *
+ * Geraetemodus ("IECSimlinkDevice"): umgekehrt bleibt der eigene Rechner am
+ * Bus, und der externe Teilnehmer haengt dort als Geraet (z. B. das Relais
+ * zu IEEE-Laufwerken). Seine Leitungen CLK und DATA rechnet die Maschine in
+ * iec_update_ports() mit ein; der Rechner liest dann immer ueber den
+ * allgemeinen Weg (iecbus.c, conf3), der vor jedem Zugriff abgleicht.
+ *
  * xdrive: heisst das Programm "xdrive" (eigenes Programm aus denselben
  * Bibliotheken wie x64sc, vgl. den Link x64 -> x64sc), gelten eigene
  * Voreinstellungen: Bus "xdrive" verbunden, eigene Einstellungsdatei.
@@ -52,6 +58,9 @@
 
 int iecbus_ext_active = 0;
 const iecbus_ext_machine_t *iecbus_ext_machine = NULL;
+int iecbus_ext_device = 0;          /* Geraetemodus aktiv */
+uint8_t iecbus_ext_dev_bus = 0xff;  /* Leitungen des externen Geraets */
+static int device_mode = 0;         /* Ressource IECSimlinkDevice */
 
 static char *simlink_name = NULL;
 static int simlink_step = 64;
@@ -63,8 +72,8 @@ static alarm_t *sl_alarm = NULL;
 
 static uint64_t hz = 1000000;       /* Takt des Rechners */
 static int64_t base_ps = 0;         /* simlink-Zeit = base + Takt * 1e12 / hz */
-static uint64_t done_ps = 0;
-static int start_pending = 0;   /* Startzustand der anderen noch uebernehmen */        /* bis hierher abgeglichen (= Fortschritt) */
+static uint64_t done_ps = 0;        /* bis hierher abgeglichen (= Fortschritt) */
+static int start_pending = 0;       /* Startzustand der anderen noch uebernehmen */
 static int in_sync = 0;
 static uint8_t pub_pull = 0;        /* zuletzt veroeffentlicht */
 static uint64_t pub_ps = 0;
@@ -102,7 +111,8 @@ static CLOCK ps2m_floor(uint64_t t)
     return c;
 }
 
-/* Leitungen der Laufwerke (und IEC-Geraete) ohne den externen Rechner */
+/* Leitungen der Laufwerke (und IEC-Geraete) ohne den externen Teilnehmer;
+   im Geraetemodus dazu die des eigenen Rechners */
 static uint8_t vice_pull(void)
 {
     uint8_t lv = 0xff, p = 0;
@@ -110,6 +120,12 @@ static uint8_t vice_pull(void)
 
     for (unit = 4; unit < 8 + NUM_DISK_UNITS; unit++) {
         lv &= iecbus.drv_bus[unit];
+    }
+    if (iecbus_ext_device) {
+        lv &= iecbus.cpu_bus;
+        if (!(iecbus.cpu_bus & 0x10)) {
+            p |= SL_IEC_ATN;
+        }
     }
     if (!(lv & 0x80)) {
         p |= SL_IEC_DATA;
@@ -192,12 +208,37 @@ static void apply_ext(uint64_t t, CLOCK c)
     }
     ext_valid = 1;
     ext_pull = l;
-    iecbus_ext_machine->host_write(to_ext(l), c);
+    if (iecbus_ext_device) {
+        /* Geraet: nur CLK und DATA, ATN gehoert dem Rechner */
+        uint8_t dev = 0xff;
+        if (l & SL_IEC_CLK) {
+            dev &= (uint8_t)~0x40;
+        }
+        if (l & SL_IEC_DATA) {
+            dev &= (uint8_t)~0x80;
+        }
+        iecbus_ext_dev_bus = dev;
+        if (iecbus_update_ports) {
+            (*iecbus_update_ports)();
+        }
+    } else {
+        iecbus_ext_machine->host_write(to_ext(l), c);
+    }
     /* ATN-Quittung der Laufwerke reagiert ohne Verzoegerung */
     publish(t);
 }
 
 static void sl_stop(void);
+
+/* Geraetemodus: der eigene Rechner hat seine Leitungen geaendert (Takt clk;
+   der Schreibweg hat vorher bis clk abgeglichen) */
+void iecbus_ext_host_changed(CLOCK clk)
+{
+    if (!sl || !iecbus_ext_device) {
+        return;
+    }
+    publish(in_sync ? done_ps : m2ps(clk));
+}
 
 /* beim Programmende abmelden, damit kein toter Teilnehmer im Bus bleibt */
 static void sl_atexit(void)
@@ -285,8 +326,16 @@ static void sl_stop(void)
         sl = NULL;
         sl_slot = -1;
         log_message(sl_log, "Detached from IEC bus.");
-        /* Leitungen freigeben, eigenen Rechner wieder anschliessen */
-        if (iecbus_ext_machine) {
+        if (iecbus_ext_device) {
+            /* Leitungen des Geraets freigeben */
+            iecbus_ext_device = 0;
+            iecbus_ext_dev_bus = 0xff;
+            iecbus_ext_update_callbacks();
+            if (iecbus_update_ports) {
+                (*iecbus_update_ports)();
+            }
+        } else if (iecbus_ext_machine) {
+            /* Leitungen freigeben, eigenen Rechner wieder anschliessen */
             iecbus_ext_machine->host_write(0, maincpu_clk);
             iecbus_ext_machine->disconnect(0);
         }
@@ -347,10 +396,20 @@ static void sl_start(void)
     pub_pull = 0;
     ext_valid = 0;
 
-    /* Rechner der Maschine vom Bus trennen; Bus zunaechst frei */
-    iecbus_ext_machine->disconnect(1);
+    if (device_mode) {
+        /* Rechner bleibt am Bus; externes Geraet zunaechst ohne Leitungen */
+        iecbus_ext_device = 1;
+        iecbus_ext_dev_bus = 0xff;
+        iecbus_ext_update_callbacks();
+        if (iecbus_update_ports) {
+            (*iecbus_update_ports)();
+        }
+    } else {
+        /* Rechner der Maschine vom Bus trennen; Bus zunaechst frei */
+        iecbus_ext_machine->disconnect(1);
+        iecbus_ext_machine->host_write(0, maincpu_clk);
+    }
     iecbus_ext_active = 1;
-    iecbus_ext_machine->host_write(0, maincpu_clk);
     publish(done_ps);
     simlink_progress(sl, sl_slot, done_ps);
     /* Zustand der anderen zur Startzeit beim ersten Abgleich uebernehmen */
@@ -363,7 +422,9 @@ static void sl_start(void)
         sl_alarm = alarm_new(maincpu_alarm_context, "IECSimlink", sl_alarm_handler, NULL);
     }
     alarm_set(sl_alarm, maincpu_clk + (CLOCK)simlink_step);
-    log_message(sl_log, "Attached to IEC bus '%s' as participant %d (machine disconnected from IEC).",
+    log_message(sl_log, device_mode
+                ? "Attached to IEC bus '%s' as participant %d (external device, machine stays on IEC)."
+                : "Attached to IEC bus '%s' as participant %d (machine disconnected from IEC).",
                 simlink_name, sl_slot);
 }
 
@@ -386,6 +447,18 @@ static int set_simlink_name(const char *val, void *param)
         return 0;
     }
     sl_stop();
+    sl_start();
+    return 0;
+}
+
+static int set_simlink_device(int val, void *param)
+{
+    val = val ? 1 : 0;
+    if (val == device_mode) {
+        return 0;
+    }
+    sl_stop();
+    device_mode = val;
     sl_start();
     return 0;
 }
@@ -425,6 +498,8 @@ int iecbus_simlink_is_xdrive(void)
 static const resource_int_t resources_int[] = {
     { "IECSimlinkStep", 64, RES_EVENT_NO, NULL,
       &simlink_step, set_simlink_step, NULL },
+    { "IECSimlinkDevice", 0, RES_EVENT_NO, NULL,
+      &device_mode, set_simlink_device, NULL },
     RESOURCE_INT_LIST_END
 };
 
@@ -468,6 +543,12 @@ static const cmdline_option_t cmdline_options[] = {
     { "-iecsimlinkstep", SET_RESOURCE, CMDLINE_ATTRIB_NEED_ARGS,
       NULL, NULL, "IECSimlinkStep", NULL,
       "<cycles>", "Synchronise with the simlink IEC bus at least every <cycles> CPU cycles" },
+    { "-iecsimlinkdevice", SET_RESOURCE, CMDLINE_ATTRIB_NONE,
+      NULL, NULL, "IECSimlinkDevice", (void *)1,
+      NULL, "The simlink participant is a device on the IEC bus; the emulated computer stays connected" },
+    { "+iecsimlinkdevice", SET_RESOURCE, CMDLINE_ATTRIB_NONE,
+      NULL, NULL, "IECSimlinkDevice", (void *)0,
+      NULL, "The simlink participant is the computer on the IEC bus (default)" },
     CMDLINE_LIST_END
 };
 

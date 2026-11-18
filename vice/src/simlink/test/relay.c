@@ -42,6 +42,7 @@ static volatile sig_atomic_t stop = 0;
 static int verbose = 0;
 static uint64_t t = 0;              /* gemeinsame Zeit des Relais */
 static int started = 0;
+static uint64_t t_back = 0;         /* Zeit auf der Laufwerksseite (Holen/Schreiben) */
 
 typedef struct {
     simlink_t *sl;
@@ -52,6 +53,9 @@ typedef struct {
 } sbus_t;
 
 static sbus_t I, C;                 /* IEEE, IEC */
+static sbus_t *FR = &I, *BK = &C;   /* Rechnerseite (vorn), Laufwerksseite (hinten) */
+static int reverse = 0;
+static int whole_writes = 0;       /* -W: Schreibdaten erst bei UNLISTEN weiterreichen */             /* -r: Rechner am IEC-Bus, Laufwerke am IEEE-Bus */
 
 static void on_sig(int s)
 {
@@ -61,6 +65,10 @@ static void on_sig(int s)
 
 static void quit(int code)
 {
+    if (verbose && t > 0) {
+        fprintf(stderr, "relay: Zeit gesamt %.3f s, davon Laufwerksseite %.3f s, Rechnerseite %.3f s\n",
+                (double)t / 1e12, (double)t_back / 1e12, (double)(t - t_back) / 1e12);
+    }
     if (I.sl) {
         simlink_detach(I.sl, I.slot);
         simlink_close(I.sl, 0);
@@ -116,18 +124,18 @@ static void set(sbus_t *b, uint8_t pull, uint8_t data)
    hoechstens timeout_us (0 = ohne Frist); dann lesen */
 static void wait_change(sbus_t *b, uint8_t mask, unsigned timeout_us);
 
-/* Am IEEE-Bus nie unbegrenzt warten: in Schritten, und die IEC-Seite jeweils
-   mitziehen - sonst stuende dort die Zeit, und das Laufwerk koennte z. B.
-   nach CLOSE den Verzeichniseintrag nicht schreiben. */
+/* Auf der Rechnerseite nie unbegrenzt warten: in Schritten, und die
+   Laufwerksseite jeweils mitziehen - sonst stuende dort die Zeit, und das
+   Laufwerk koennte z. B. nach CLOSE den Verzeichniseintrag nicht schreiben. */
 #define IDLE_STEP_US 1000
 
 static void wait_change_raw(sbus_t *b, uint8_t mask, unsigned timeout_us);
 
 static void wait_change(sbus_t *b, uint8_t mask, unsigned timeout_us)
 {
-    if (b == &I && (timeout_us == 0 || timeout_us > IDLE_STEP_US)) {
+    if (b == FR && (timeout_us == 0 || timeout_us > IDLE_STEP_US)) {
         wait_change_raw(b, mask, IDLE_STEP_US);
-        rd(&C);
+        rd(BK);
         return;
     }
     wait_change_raw(b, mask, timeout_us);
@@ -346,6 +354,319 @@ static void c_write(int sec, const unsigned char *s, size_t n, int eoi_last)
     c_unlisten();
 }
 
+/* ============== Gegenrichtung: IEC-Geraeteseite (-r) ================= */
+
+static int d_unit = 8;              /* eigene Nummer am IEC-Bus */
+
+static void d_drive(uint8_t pull) { set(&C, pull, 0); }
+static void d_on(uint8_t m)  { d_drive(C.pull | m); }
+static void d_off(uint8_t m) { d_drive((uint8_t)(C.pull & ~m)); }
+
+/* warten, bis (Bus & m) == want. atn >= 0: abbrechen, sobald ATN nicht
+   mehr diesem Zustand entspricht (1 = gezogen). 0 ok, -1 ATN, -2 Frist */
+static int d_wait(uint8_t m, uint8_t want, int atn, unsigned timeout_us)
+{
+    uint64_t dl = timeout_us ? t + (uint64_t)timeout_us * STEP : 0;
+    tick(&C);
+    for (;;) {
+        if (atn >= 0 && !!(C.in & ATN_C) != atn) {
+            return -1;
+        }
+        if ((C.in & m) == want) {
+            return 0;
+        }
+        if (dl && t >= dl) {
+            return -2;
+        }
+        wait_change(&C, (uint8_t)(m | ATN_C), dl ? (unsigned)((dl - t) / STEP) : 0);
+    }
+}
+
+/* ein Byte als Hoerer; under_atn: unter ATN. -1 bei ATN-Wechsel */
+static int d_recv(int under_atn, int *eoi)
+{
+    int i, b = 0, r;
+
+    *eoi = 0;
+    /* Erst muss der Sprecher CLK gezogen haben: beim Beginn von ATN zieht
+       der C64 ATN und erst einige us spaeter CLK - wer vorher nur auf
+       "CLK frei" schaut, gibt DATA zu frueh frei, und der C64 meldet
+       "device not present". Nur kurz warten: kam das Relais spaet dazu (z. B.
+       nach dem Anlauf), ist CLK schon wieder frei und bleibt es. */
+    if (d_wait(CLK_C, CLK_C, under_atn, 100) == -1) {
+        return -1;
+    }
+    /* Sprecher bereit: er gibt CLK frei */
+    if (d_wait(CLK_C, 0, under_atn, 0) < 0) {
+        return -1;
+    }
+    d_off(DATA_C);                  /* bereit fuer Daten */
+    r = d_wait(CLK_C, CLK_C, under_atn, 200);
+    if (r == -1) {
+        return -1;
+    }
+    if (r == -2) {
+        /* EOI: Sprecher wartet; 60 us DATA ziehen als Quittung */
+        *eoi = 1;
+        d_on(DATA_C);
+        wait_us(&C, 60);
+        d_off(DATA_C);
+        if (d_wait(CLK_C, CLK_C, under_atn, 0) < 0) {
+            return -1;
+        }
+    }
+    for (i = 0; i < 8; i++) {
+        if (d_wait(CLK_C, 0, under_atn, 0) < 0) {          /* Bit gueltig */
+            return -1;
+        }
+        if (!(C.in & DATA_C)) {
+            b |= 1 << i;
+        }
+        if (d_wait(CLK_C, CLK_C, under_atn, 0) < 0) {
+            return -1;
+        }
+    }
+    d_on(DATA_C);                   /* Quittung */
+    return b;
+}
+
+/* ein Byte als Sprecher; -1 bei ATN, -2 keine Quittung */
+static int d_send(int b, int eoi)
+{
+    int i;
+
+    d_off(CLK_C);                   /* bereit zum Senden */
+    if (d_wait(DATA_C, 0, 0, 0) < 0) {          /* Hoerer bereit */
+        return -1;
+    }
+    if (eoi) {
+        if (d_wait(DATA_C, DATA_C, 0, 0) < 0 || d_wait(DATA_C, 0, 0, 0) < 0) {
+            return -1;
+        }
+    }
+    d_on(CLK_C);
+    /* Start (CLK low) lang genug halten: der C64 liest nach dem Freigeben
+       von DATA bis zu rund 80 us nicht (Kernal ACPTR, dazu Badlines); sieht
+       er den Start nicht, haelt er das erste Bit dafuer und zaehlt nur 7 */
+    wait_us(&C, 150);
+    for (i = 0; i < 8; i++) {
+        if (b & (1 << i)) {
+            d_off(DATA_C);
+        } else {
+            d_on(DATA_C);
+        }
+        /* Beide Phasen laenger als ACPTR braucht, um einen Wechsel sicher zu
+           sehen: Doppel-Lesen ($DD00 zweimal, gleich), dazu eine Badline
+           (bis 47 Takte) - sonst haelt der C64 das naechste Bit fuer das
+           alte und zaehlt eins zu wenig */
+        wait_us(&C, 40);
+        d_off(CLK_C);
+        wait_us(&C, 80);
+        d_on(CLK_C);
+        d_off(DATA_C);
+        wait_us(&C, 60);
+    }
+    if (d_wait(DATA_C, DATA_C, 0, 1000) < 0) {
+        return -2;
+    }
+    return 0;
+}
+
+/* =========== Gegenrichtung: IEEE-Controllerseite (-r) ================= */
+
+static int k_unit = 8;              /* Laufwerk am IEEE-Bus */
+
+#define KLOW(m) (I.in & (m))
+
+static void k_drive(uint8_t pull, uint8_t data) { set(&I, pull, data); }
+
+/* warten, bis (Bus & m) == want; 0 ok, -1 Frist */
+static int k_wait(uint8_t m, uint8_t want, unsigned timeout_us)
+{
+    uint64_t dl = timeout_us ? t + (uint64_t)timeout_us * STEP : 0;
+    tick(&I);
+    for (;;) {
+        if ((I.in & m) == want) {
+            return 0;
+        }
+        if (dl && t >= dl) {
+            return -1;
+        }
+        wait_change(&I, m, dl ? (unsigned)((dl - t) / STEP) : 0);
+    }
+}
+
+/* ein Byte als Sprecher (Controller unter ATN oder Daten) */
+static int k_send(uint8_t b, int eoi)
+{
+    uint8_t base = (uint8_t)(I.pull & SL_IEEE_ATN);
+
+    k_drive(base, 0);
+    if (k_wait(SL_IEEE_NRFD, 0, 0) < 0) {        /* alle Hoerer bereit */
+        return -1;
+    }
+    k_drive((uint8_t)(base | (eoi ? SL_IEEE_EOI : 0)), b);
+    wait_us(&I, 2);
+    k_drive((uint8_t)(base | SL_IEEE_DAV | (eoi ? SL_IEEE_EOI : 0)), b);
+    if (k_wait(SL_IEEE_NDAC, 0, 65000) < 0) {    /* alle haben angenommen */
+        k_drive(base, 0);
+        return -1;
+    }
+    k_drive(base, 0);
+    return 0;
+}
+
+/* ATN, Adressbyte, Sekundaerbyte (b2 < 0: keins). -1: Geraet fehlt */
+static int k_atn(uint8_t b1, int b2)
+{
+    k_drive(SL_IEEE_ATN, 0);
+    wait_us(&I, 100);
+    if (!KLOW(SL_IEEE_NDAC) && !KLOW(SL_IEEE_NRFD)) {
+        k_drive(0, 0);
+        return -1;                  /* niemand quittiert ATN */
+    }
+    if (k_send(b1, 0) < 0 || (b2 >= 0 && k_send((uint8_t)b2, 0) < 0)) {
+        k_drive(0, 0);
+        return -1;
+    }
+    return 0;
+}
+
+static void k_atn_end(void)
+{
+    wait_us(&I, 2);
+    k_drive(0, 0);
+    wait_us(&I, 20);
+}
+
+/* Offenes LISTEN am IEEE-Bus (-1: keins). Schreibdaten in Portionen gehen in
+   EINER Sitzung (LISTEN ... UNLISTEN) wie beim PET: ein neues LISTEN je
+   Portion kam bei der 8250 genau dann, wenn sie den vollen Block schrieb,
+   und sie gab danach NRFD nicht mehr frei. */
+static int k_listening = -1;
+
+static void k_unlisten(void)
+{
+    if (k_listening >= 0) {
+        if (k_atn(0x3f, -1) == 0) {
+            k_atn_end();
+        }
+        k_listening = -1;
+    }
+}
+
+static void k_write(int sec, const unsigned char *s, size_t n, int eoi_last)
+{
+    size_t i;
+    if (verbose > 1) {
+        fprintf(stderr, "relay: IEEE LISTEN %d $%02X, %lu Bytes%s\n", k_unit, sec, (unsigned long)n,
+                k_listening == sec ? " (weiter)" : "");
+    }
+    if (k_listening != sec) {
+        k_unlisten();
+        if (k_atn((uint8_t)(0x20 + k_unit), sec) < 0) {
+            iec_err = 1;
+            return;
+        }
+        k_atn_end();
+        k_listening = sec;
+    }
+    for (i = 0; i < n; i++) {
+        if (k_send(s[i], eoi_last && i + 1 == n) < 0) {
+            fprintf(stderr, "relay: IEEE Senden abgebrochen bei Byte %lu\n", (unsigned long)i);
+            iec_err = 1;
+            break;
+        }
+    }
+    if (eoi_last || iec_err) {
+        k_unlisten();
+    }
+}
+
+/* Kanal sa lesen: TALK, bis EOI oder max Bytes, UNTALK */
+static size_t k_read(int sa, unsigned char *buf, size_t max, int *got_eoi)
+{
+    size_t n = 0;
+    int eoi = 0;
+
+    *got_eoi = 0;
+    k_unlisten();
+    if (k_atn((uint8_t)(0x40 + k_unit), 0x60 | sa) < 0) {
+        iec_err = 1;
+        return 0;
+    }
+    /* Umschalten: Controller wird Hoerer */
+    k_drive(SL_IEEE_ATN | SL_IEEE_NRFD | SL_IEEE_NDAC, 0);
+    wait_us(&I, 2);
+    k_drive(SL_IEEE_NRFD | SL_IEEE_NDAC, 0);
+    while (!eoi && n < max) {
+        k_drive(SL_IEEE_NDAC, 0);                   /* bereit */
+        /* erstes Byte: das Laufwerk darf suchen; danach wie der PET */
+        if (k_wait(SL_IEEE_DAV, SL_IEEE_DAV, n == 0 ? 500000 : 65000) < 0) {
+            break;                                  /* Sprecher schweigt */
+        }
+        k_drive(SL_IEEE_NRFD | SL_IEEE_NDAC, 0);
+        buf[n++] = I.in_data;
+        eoi = KLOW(SL_IEEE_EOI) ? 1 : 0;
+        k_drive(SL_IEEE_NRFD, 0);                   /* angenommen */
+        if (k_wait(SL_IEEE_DAV, 0, 65000) < 0) {
+            break;
+        }
+        k_drive(SL_IEEE_NRFD | SL_IEEE_NDAC, 0);
+    }
+    /* UNTALK */
+    k_drive(SL_IEEE_ATN, 0);
+    wait_us(&I, 100);
+    k_send(0x5f, 0);
+    k_atn_end();
+    *got_eoi = eoi;
+    return n;
+}
+
+static void k_close(int sa)
+{
+    k_unlisten();
+    if (k_atn((uint8_t)(0x20 + k_unit), 0xe0 | sa) == 0) {
+        k_send(0x3f, 0);
+        k_atn_end();
+    }
+}
+
+/* ---- Laufwerksseite, je nach Richtung -------------------------------- */
+
+static void be_write_raw(int sec, const unsigned char *s, size_t n, int eoi_last);
+
+static size_t be_read(int sa, unsigned char *buf, size_t max, int *eoi)
+{
+    return reverse ? k_read(sa, buf, max, eoi) : c_read_channel(sa, buf, max, eoi);
+}
+
+static void be_write(int sec, const unsigned char *s, size_t n, int eoi_last)
+{
+    uint64_t t0 = t;
+    be_write_raw(sec, s, n, eoi_last);
+    t_back += t - t0;
+}
+
+static void be_write_raw(int sec, const unsigned char *s, size_t n, int eoi_last)
+{
+    if (reverse) {
+        k_write(sec, s, n, eoi_last);
+    } else {
+        c_write(sec, s, n, eoi_last);
+    }
+}
+
+static void be_close(int sa)
+{
+    if (reverse) {
+        k_close(sa);
+    } else {
+        c_listen(0xe0 | sa);
+        c_unlisten();
+    }
+}
+
 /* ======================= IEEE: Geraeteseite ========================== */
 
 #define LOW(m) (I.in & (m))
@@ -401,7 +722,11 @@ static void prefetch(int sa)
         ctotal[sa] = 0;
     }
     iec_err = 0;
-    clen[sa] = c_read_channel(sa, cbuf[sa], sa == 15 ? BUFMAX : CHUNK, &eoi);
+    {
+        uint64_t t0 = t;
+        clen[sa] = be_read(sa, cbuf[sa], sa == 15 ? BUFMAX : CHUNK, &eoi);
+        t_back += t - t0;
+    }
     cpos[sa] = 0;
     cvalid[sa] = 1;
     ctotal[sa] += clen[sa];
@@ -489,7 +814,7 @@ static void finish_listen(int sa)
 {
     if (opening >= 0) {
         log_msg("OPEN %s (Kanal %ld)", "", opening);
-        c_write(0xf0 | opening, name, namelen, 1);
+        be_write(0xf0 | opening, name, namelen, 1);
         cvalid[opening] = 0;
         if (namelen) {
             cvalid[15] = 0;     /* OPEN mit Namen setzt den Fehlerkanal neu */
@@ -497,13 +822,146 @@ static void finish_listen(int sa)
         opening = -1;
     } else if (wlen) {
         iec_err = 0;
-        c_write(0x60 | sa, wbuf, wlen, 1);
+        be_write(0x60 | sa, wbuf, wlen, 1);
         fprintf(stderr, "relay %10.3f ms: Daten an Kanal %d weitergereicht: %lu Bytes%s\n",
                 (double)t / 1e9, sa, wtotal + (unsigned long)wlen, iec_err ? " (FEHLER)" : "");
         wlen = 0;
         wtotal = 0;
         if (sa == 15) {
             cvalid[15] = 0;     /* Befehl: Fehlerkanal neu holen */
+        }
+    }
+}
+
+/* Gegenrichtung: Hauptschleife als Geraet am IEC-Bus */
+static void run_reverse(void)
+{
+    enum { IDLE, LISTENER, TALKER } role = IDLE;
+    int sa = 0, turned = 0;
+
+    for (;;) {
+        int eoi = 0, b;
+        tick(&C);
+        if (C.in & ATN_C) {
+            /* ATN: sofort DATA ziehen (Quittung), CLK frei */
+            if (!(C.pull & DATA_C) || (C.pull & CLK_C)) {
+                d_drive(DATA_C);
+            }
+            b = d_recv(1, &eoi);
+            if (b < 0) {
+                continue;
+            }
+            if (verbose > 1) {
+                fprintf(stderr, "relay: IEC ATN $%02X\n", b);
+            }
+            if (b == 0x20 + d_unit) {
+                role = LISTENER;
+            } else if (b == 0x3f) {
+                if (role == LISTENER) {
+                    finish_listen(sa);
+                    role = IDLE;
+                }
+            } else if (b == 0x40 + d_unit) {
+                role = TALKER;
+                turned = 0;
+            } else if (b == 0x5f) {
+                if (role == TALKER) {
+                    role = IDLE;
+                }
+            } else if ((b & 0xe0) == 0x20 || (b & 0xe0) == 0x40) {
+                if (role == TALKER && (b & 0xe0) == 0x40) {
+                    role = IDLE;        /* anderes Geraet spricht */
+                }
+            } else if (role != IDLE && (b & 0xf0) == 0x60) {
+                sa = b & 0x0f;
+                wlen = 0;
+                wtotal = 0;
+            } else if (role != IDLE && (b & 0xf0) == 0xf0) {
+                sa = b & 0x0f;
+                opening = sa;
+                namelen = 0;
+            } else if (role != IDLE && (b & 0xf0) == 0xe0) {
+                sa = b & 0x0f;
+                log_msg("CLOSE%s %ld", "", sa);
+                be_close(sa);
+                cvalid[sa] = 0;
+            }
+            continue;
+        }
+        if (role == LISTENER) {
+            /* DATA bleibt gezogen, bis der Sprecher bereit ist */
+            b = d_recv(0, &eoi);
+            if (b < 0) {
+                continue;
+            }
+            if (opening >= 0) {
+                if (namelen < sizeof(name)) {
+                    name[namelen++] = (unsigned char)b;
+                }
+            } else if (wlen < BUFMAX) {
+                wbuf[wlen++] = (unsigned char)b;
+                if (sa != 15 && wlen == CHUNK + 1 && !whole_writes) {
+                    be_write(0x60 | sa, wbuf, CHUNK, 0);
+                    wtotal += CHUNK;
+                    wbuf[0] = wbuf[CHUNK];
+                    wlen = 1;
+                    if (verbose) {
+                        fprintf(stderr, "relay %10.3f ms: Kanal %d: %lu Bytes geschrieben bisher (IEEE-Seite bei %.3f ms)\n",
+                                (double)t / 1e9, sa, wtotal,
+                                (double)(simlink_peers_progress(I.sl, I.slot, NULL) - I.off) / 1e9);
+                    }
+                    tick(&C);
+                }
+            }
+            continue;
+        }
+        if (role == TALKER) {
+            if (!turned) {
+                /* Umschalten: Rechner zieht DATA und gibt CLK frei; dann
+                   uebernimmt das Geraet CLK (Sprecher, noch nicht bereit) */
+                d_drive(DATA_C);
+                if (d_wait(CLK_C, 0, 0, 0) < 0) {
+                    continue;
+                }
+                d_drive(CLK_C);
+                turned = 1;
+                wait_us(&C, 80);
+                /* Daten holen, solange CLK gehalten ist (der Rechner wartet
+                   darauf ohne Frist) */
+                prefetch(sa);
+                tick(&C);
+            }
+            if (cvalid[sa] && cpos[sa] >= clen[sa] && !ceof[sa]) {
+                prefetch(sa);           /* naechste Portion, CLK gehalten */
+                tick(&C);
+            }
+            if (!cvalid[sa] || cpos[sa] >= clen[sa]) {
+                /* nichts zu liefern: CLK frei und schweigen; der Rechner
+                   meldet den Fehler (Zeitueberschreitung) */
+                d_drive(0);
+                if (!(C.in & ATN_C)) {
+                    wait_change(&C, ATN_C, 0);
+                }
+                continue;
+            }
+            b = d_send(cbuf[sa][cpos[sa]], cpos[sa] + 1 == clen[sa] && ceof[sa]);
+            if (b == 0) {
+                cpos[sa]++;
+                if (cpos[sa] >= clen[sa] && ceof[sa]) {
+                    d_drive(0);
+                    role = IDLE;
+                }
+            } else if (b == -2) {
+                fprintf(stderr, "relay %10.3f ms: IEC: Byte %lu von Kanal %d nicht quittiert\n",
+                        (double)t / 1e9, (unsigned long)cpos[sa], sa);
+                d_drive(0);             /* Rechner hat nicht quittiert */
+                role = IDLE;
+            }
+            continue;
+        }
+        d_drive(0);
+        if (!(C.in & ATN_C)) {
+            wait_change(&C, ATN_C, 0);
         }
     }
 }
@@ -515,10 +973,12 @@ int main(int argc, char **argv)
     enum { IDLE, LISTENER, TALKER } role = IDLE;
     int sa = 0;
 
-    while ((c = getopt(argc, argv, "u:d:w:v")) != -1) {
+    while ((c = getopt(argc, argv, "u:d:w:vrW")) != -1) {
         switch (c) {
-        case 'u': ieee_unit = atoi(optarg); break;
-        case 'd': iec_unit = atoi(optarg); break;
+        case 'u': ieee_unit = d_unit = atoi(optarg); break;
+        case 'd': iec_unit = k_unit = atoi(optarg); break;
+        case 'r': reverse = 1; break;
+        case 'W': whole_writes = 1; break;
         case 'w': wait_s = atof(optarg); break;
         case 'v': verbose++; break;
         default: goto usage;
@@ -526,7 +986,10 @@ int main(int argc, char **argv)
     }
     if (optind + 2 != argc) {
 usage:
-        fprintf(stderr, "usage: relay [-u ieee_unit] [-d iec_unit] [-w s] [-v] ieeebus iecbus\n");
+        fprintf(stderr, "usage: relay [-r] [-u geraet] [-d laufwerk] [-w s] [-v] ieeebus iecbus\n"
+                        "  ohne -r: Rechner (PET) am IEEE-Bus, Laufwerk am IEC-Bus\n"
+                        "  -r:      Rechner (C64) am IEC-Bus, Laufwerk am IEEE-Bus\n"
+                        "  -u: eigene Nummer am Rechnerbus, -d: Nummer des Laufwerks\n");
         return 2;
     }
     signal(SIGINT, on_sig);
@@ -550,15 +1013,37 @@ usage:
         fprintf(stderr, "kein freier Platz\n");
         return 1;
     }
-    fprintf(stderr, "relay: IEEE '%s' Geraet %d  <->  IEC '%s' Laufwerk %d\n",
-            argv[optind], ieee_unit, argv[optind + 1], iec_unit);
-    while ((simlink_others(I.sl, I.slot) == 0 || simlink_others(C.sl, C.slot) == 0) && !stop) {
-        usleep(10000);
+    if (reverse) {
+        FR = &C;
+        BK = &I;
+        fprintf(stderr, "relay: IEC '%s' Geraet %d  <->  IEEE '%s' Laufwerk %d\n",
+                argv[optind + 1], d_unit, argv[optind], k_unit);
+    } else {
+        fprintf(stderr, "relay: IEEE '%s' Geraet %d  <->  IEC '%s' Laufwerk %d\n",
+                argv[optind], ieee_unit, argv[optind + 1], iec_unit);
+    }
+    {
+        int waited = 0;
+        while ((simlink_others(I.sl, I.slot) == 0 || simlink_others(C.sl, C.slot) == 0) && !stop) {
+            usleep(10000);
+            if (++waited > 3000) {
+                fprintf(stderr, "relay: nach 30 s keine Gegenseite an beiden Bussen, Ende\n");
+                quit(1);
+            }
+        }
     }
     started = 1;
     I.off = simlink_start_time(I.sl, I.slot);
     C.off = simlink_start_time(C.sl, C.slot);
     t = 0;              /* VICE uebernimmt den Zustand zur Startzeit */
+    if (reverse) {
+        /* Laufwerk hochfahren lassen (IEEE-Zeit vor); der C64 wartet so
+           lange, weil seine Zeit steht */
+        t = STEP;
+        d_drive(DATA_C);    /* derweil DATA halten: der C64 wartet ohne Frist */
+        wait_us(&I, (unsigned)(wait_s * 1e6));
+        run_reverse();
+    }
     /* Laufwerk hochfahren lassen (IEC-Zeit vor). Am IEEE-Bus derweil NRFD
        und NDAC halten: das Relais schaut dort so lange nicht hin, und der PET
        wartet auf NRFD ohne Zeitgrenze. */
@@ -611,8 +1096,7 @@ usage:
             } else if (role != IDLE && (b & 0xf0) == 0xe0) {
                 sa = b & 0x0f;
                 log_msg("CLOSE%s %ld", "", sa);
-                c_listen(0xe0 | sa);
-                c_unlisten();
+                be_close(sa);
                 cvalid[sa] = 0;
             }
             continue;
@@ -631,14 +1115,15 @@ usage:
                 /* Schreibdaten (nicht Befehle) in Portionen weiterreichen,
                    dabei NRFD halten. Ein Byte bleibt zurueck, damit das
                    letzte bei UNLISTEN mit EOI rausgeht. */
-                if (sa != 15 && wlen == CHUNK + 1) {
-                    c_write(0x60 | sa, wbuf, CHUNK, 0);
+                if (sa != 15 && wlen == CHUNK + 1 && !whole_writes) {
+                    be_write(0x60 | sa, wbuf, CHUNK, 0);
                     wtotal += CHUNK;
                     wbuf[0] = wbuf[CHUNK];
                     wlen = 1;
                     if (verbose) {
-                        fprintf(stderr, "relay %10.3f ms: Kanal %d: %lu Bytes geschrieben bisher\n",
-                                (double)t / 1e9, sa, wtotal);
+                        fprintf(stderr, "relay %10.3f ms: Kanal %d: %lu Bytes geschrieben bisher (IEEE-Seite bei %.3f ms)\n",
+                                (double)t / 1e9, sa, wtotal,
+                                (double)(simlink_peers_progress(I.sl, I.slot, NULL) - I.off) / 1e9);
                     }
                     tick(&I);
                 }

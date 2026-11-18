@@ -118,6 +118,17 @@ typedef struct iecbus_ext_machine_s {
 
 extern const iecbus_ext_machine_t *iecbus_ext_machine;
 void iecbus_ext_reset(void);
+
+/* simlink: externes Geraet am IEC-Bus, der eigene Rechner bleibt am Bus
+   (Ressource IECSimlinkDevice). Leitungen des Geraets im drv_bus-Format:
+   0x40 CLK, 0x80 DATA, 1 = frei. Die Maschine rechnet sie in
+   iec_update_ports() mit ein. */
+extern int iecbus_ext_device;
+extern uint8_t iecbus_ext_dev_bus;
+/* vom Schreibweg des Rechners nach jeder Aenderung aufgerufen */
+void iecbus_ext_host_changed(CLOCK clk);
+/* Lese-/Schreibweg neu waehlen (mit externem Geraet immer der allgemeine) */
+void iecbus_ext_update_callbacks(void);
 int iecbus_simlink_is_xdrive(void);
 int iecbus_simlink_resources_init(void);
 void iecbus_simlink_resources_shutdown(void);

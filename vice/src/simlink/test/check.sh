@@ -1,6 +1,6 @@
 #!/bin/sh
-# Gesamttest simlink: IEEE (xpet + ieeedev), IEC (xdrive + iechost) und
-# Relais (xpet + relay + xdrive).
+# Gesamttest simlink: IEEE (xpet + ieeedev), IEC (xdrive + iechost),
+# Relais (xpet + relay + xdrive) und Gegenrichtung (x64sc + relay -r + xpet).
 #
 #   src/simlink/test/check.sh [VICE-Baumverzeichnis]   (Standard: ../../..)
 #
@@ -180,6 +180,48 @@ if "$SRC/c1541" cmd.d64 -list 2>/dev/null | grep -q '"neu *" 99' \
 else
     bad "Befehle"; grep -v ATN cmd.trace | tail -5
 fi
+
+echo "Gegenrichtung (x64sc + relay -r + xpet mit 8250):"
+# C64 bleibt am IEC-Bus (-iecsimlinkdevice), das Relais ist dort Geraet 8 und
+# am IEEE-Bus Controller einer 8250 in xpet (PET ruht).
+python3 - <<'PYEOF'
+addr = 0x0801
+out = bytearray([1, 8])
+n = 1
+while len(out) < 8000:
+    body = bytes([0x8f]) + (' %05d ABCDEFGHIJKLMNOPQRSTUVWXYZ' % n).encode() + b'\0'
+    nxt = addr + 4 + len(body)
+    out += nxt.to_bytes(2, 'little') + n.to_bytes(2, 'little') + body
+    addr = nxt
+    n += 1
+out += b'\0\0'
+open('c64prg', 'wb').write(out)
+PYEOF
+"$SRC/c1541" -format "rev,82" d82 rev.d82 -write c64prg c64prg >/dev/null 2>&1
+shm_rm chkqi; shm_rm chkqc
+"$WORK/relay" -r -v chkqi chkqc > rev.trace 2>&1 &
+R=$!
+sleep 0.3
+timeout 900 "$SRC/xpet" -default -directory "$DATA" +sound -model 4032 -drive8type 8250 -drive8truedrive \
+    -8 rev.d82 -ieeesimlink chkqi -warp -limitcycles 75000000 > revp.log 2>&1 &
+P=$!
+sleep 0.3
+timeout 900 "$SRC/x64sc" -default -directory "$DATA" +sound -drive8type 0 +busdevice8 \
+    -iecsimlink chkqc -iecsimlinkdevice -warp -limitcycles 70000000 \
+    -keybuf 'load"c64prg",8\nsave"neu",8\n10 open1,8,15:input#1,a,b$:close1\nload"nix",8\nrun\n' > revc.log 2>&1
+wait $P
+sleep 0.5
+kill $R 2>/dev/null
+wait $R 2>/dev/null
+rm -f revneu
+"$SRC/c1541" rev.d82 -read neu revneu >/dev/null 2>&1
+if cmp -s c64prg revneu && grep -q "LOAD) geholt: $(wc -c < c64prg) Bytes" rev.trace \
+   && grep -q "Kanal 15 geholt: 27 Bytes" rev.trace; then
+    ok "LOAD von der 8250, SAVE bytegleich, Fehlerkanal nach FILE NOT FOUND"
+else
+    bad "Gegenrichtung"; grep -v "ATN" rev.trace | tail -8
+fi
+shm_rm chkqi; shm_rm chkqc
 
 if [ $FAIL = 0 ]; then
     echo "Alle Tests bestanden."

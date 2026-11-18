@@ -118,6 +118,7 @@ typedef struct iecbus_ext_machine_s {
 
 extern const iecbus_ext_machine_t *iecbus_ext_machine;
 void iecbus_ext_reset(void);
+int iecbus_simlink_is_xdrive(void);
 int iecbus_simlink_resources_init(void);
 void iecbus_simlink_resources_shutdown(void);
 int iecbus_simlink_cmdline_options_init(void);

@@ -14,6 +14,10 @@
  * Ressourcen: "IECSimlink" (Busname, leer = aus), "IECSimlinkStep" (Abgleich
  * spaetestens alle n Takte des Rechners).
  *
+ * xdrive: heisst das Programm "xdrive" (eigenes Programm aus denselben
+ * Bibliotheken wie x64sc, vgl. den Link x64 -> x64sc), gelten eigene
+ * Voreinstellungen: Bus "xdrive" verbunden, eigene Einstellungsdatei.
+ *
  * This file is part of VICE, the Versatile Commodore Emulator.
  * See README for copyright notice.
  *
@@ -31,6 +35,7 @@
 #include <string.h>
 
 #include "alarm.h"
+#include "archdep.h"
 #include "cmdline.h"
 #include "drive.h"
 #include "drivetypes.h"
@@ -393,6 +398,26 @@ static const resource_string_t resources_string[] = {
     RESOURCE_STRING_LIST_END
 };
 
+/* xdrive: dasselbe mit verbundenem Bus als Voreinstellung */
+static const resource_string_t resources_string_xdrive[] = {
+    { "IECSimlink", "xdrive", RES_EVENT_NO, NULL,
+      &simlink_name, set_simlink_name, NULL },
+    RESOURCE_STRING_LIST_END
+};
+
+#ifdef _WIN32
+#define XDRIVE_CONFIG_NAME "xdrive.ini"
+#else
+#define XDRIVE_CONFIG_NAME "xdriverc"
+#endif
+
+/* laeuft dieses Programm als xdrive? */
+int iecbus_simlink_is_xdrive(void)
+{
+    const char *n = archdep_program_name();
+    return n != NULL && strcmp(n, "xdrive") == 0;
+}
+
 static const resource_int_t resources_int[] = {
     { "IECSimlinkStep", 64, RES_EVENT_NO, NULL,
       &simlink_step, set_simlink_step, NULL },
@@ -401,6 +426,17 @@ static const resource_int_t resources_int[] = {
 
 int iecbus_simlink_resources_init(void)
 {
+    if (iecbus_simlink_is_xdrive()) {
+        /* eigene Einstellungsdatei, sofern nicht per -config vorgegeben */
+        if (vice_config_file == NULL) {
+            vice_config_file = util_join_paths(archdep_user_config_path(),
+                                               XDRIVE_CONFIG_NAME, NULL);
+        }
+        if (resources_register_string(resources_string_xdrive) < 0) {
+            return -1;
+        }
+        return resources_register_int(resources_int);
+    }
     if (resources_register_string(resources_string) < 0) {
         return -1;
     }

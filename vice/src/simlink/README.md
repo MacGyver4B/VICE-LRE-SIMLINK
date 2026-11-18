@@ -78,7 +78,22 @@ xpet -ieeesimlink <bus> [-ieeesimlinkstep <takte>]
   Takt des PET gestempelt (Laufwerke laufen in VICE nachgezogen), nicht
   mit ihrem eigenen.
 
-## Am IEC-Bus (x64sc, Vorstufe zu xdrive)
+## xdrive
+
+Eigenes Programm aus denselben Bausteinen wie x64sc (vgl. den Link
+x64 -> x64sc). Als `xdrive` gestartet:
+
+- IEC-Bus `xdrive` ist verbunden, der C64 vom IEC-Bus getrennt;
+- eigene Einstellungsdatei (`xdriverc`, unter Windows `xdrive.ini`),
+  sofern nicht per `-config` vorgegeben;
+- sonst ein normaler C64 mit allen Laufwerkstypen und Menues.
+
+```
+xdrive -8 disk.d64                 # Bus "xdrive"
+xdrive -iecsimlink pet1 -8 a.d64   # anderer Busname
+```
+
+## Am IEC-Bus (x64sc)
 
 ```
 x64sc -drive8type 1541 -8 disk.d64 +busdevice8 -iecsimlink <bus> [-iecsimlinkstep <takte>]

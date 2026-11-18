@@ -658,7 +658,7 @@ endif
 
 # workaround for extra exe creation
 
-bin_PROGRAMS = vsid $(x64_bin) x64sc x64dtv xscpu64 x128 xvic xpet xplus4 \
+bin_PROGRAMS = vsid $(x64_bin) x64sc xdrive x64dtv xscpu64 x128 xvic xpet xplus4 \
 	       xcbm2 xcbm5x0 c1541
 
 EXTRA_PROGRAMS =
@@ -824,6 +824,13 @@ else
 x64sc_LDFLAGS = @x64_LDFLAGS@ -Wl,-Map=x64sc.map
 endif
 endif
+
+# xdrive: dieselben Bausteine wie x64sc; als "xdrive" gestartet ist der C64
+# vom IEC-Bus getrennt und ein externer Rechner (simlink) bedient die
+# Laufwerke (siehe src/iecbus/iecbus-simlink.c)
+xdrive_SOURCES = $(base_sources) $(midi_sources)
+xdrive_LDADD = $(x64sc_libs) $(emu_extlibs) @TFE_LIBS@ @NETPLAY_LIBS@ $(X64SC_RES)
+xdrive_DEPENDENCIES = $(x64sc_libs)
 
 .PHONY: x64sc-all x64sc-program
 x64sc-all:

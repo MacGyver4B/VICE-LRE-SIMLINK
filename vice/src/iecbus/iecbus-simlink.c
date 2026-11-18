@@ -70,10 +70,8 @@ static uint64_t pub_ps = 0;
 static int ext_valid = 0;
 static uint8_t ext_pull = 0;        /* zuletzt eingespeist */
 
-/* Anker je Laufwerk fuer den laufenden Abschnitt */
-static uint64_t anchor_ps[NUM_DISK_UNITS];
-static CLOCK anchor_dclk[NUM_DISK_UNITS];
-static uint64_t chunk_end_ps = 0;
+/* Zusammenhang Haupt-/Laufwerkstakt je Laufwerk (vor jedem Nachziehen) */
+static drive_sync_snap_t snap[NUM_DISK_UNITS];
 
 #define PS_PER_S 1000000000000ULL
 
@@ -148,29 +146,23 @@ void iecbus_ext_drive_changed(unsigned int dnr)
         return;
     }
     if (in_sync && dnr < NUM_DISK_UNITS) {
-        diskunit_context_t *unit = diskunit_context[dnr];
-        uint64_t ps_cycle = 1000000ULL / (uint64_t)(unit->clock_frequency > 0 ? unit->clock_frequency : 1);
-        t = anchor_ps[dnr] + (uint64_t)(*unit->clk_ptr - anchor_dclk[dnr]) * ps_cycle;
-        if (t > chunk_end_ps) {
-            t = chunk_end_ps;
-        }
+        /* Laufwerkstakt -> Haupttakt, unabhaengig von der Schrittweite */
+        t = m2ps(drive_sync_main_clock(&snap[dnr], *diskunit_context[dnr]->clk_ptr));
     }
     publish(t);
 }
 
 /* Laufwerke bis Takt c nachziehen (Haken ist waehrenddessen gesperrt) */
-static void run_drives(CLOCK c, uint64_t t_end)
+static void run_drives(CLOCK c)
 {
     unsigned int dnr;
 
     for (dnr = 0; dnr < NUM_DISK_UNITS; dnr++) {
         diskunit_context_t *unit = diskunit_context[dnr];
         if (unit && unit->enable) {
-            anchor_ps[dnr] = m2ps(unit->cpu->last_clk);
-            anchor_dclk[dnr] = *unit->clk_ptr;
+            drive_sync_snapshot(unit, &snap[dnr]);
         }
     }
-    chunk_end_ps = t_end;
     drive_cpu_execute_all(c);
 }
 
@@ -250,16 +242,16 @@ static void ext_sync(CLOCK clk)
         /* Aenderungen des externen Rechners der Reihe nach einspeisen */
         while (simlink_next_change(sl, sl_slot, done_ps, upto, &tc)) {
             CLOCK c = ps2m_floor(tc);
-            run_drives(c, tc);
+            run_drives(c);
             apply_ext(tc, c);
             done_ps = tc;
             /* alles bis einschliesslich tc ist veroeffentlicht */
             simlink_progress(sl, sl_slot, done_ps + 1);
         }
         if (upto == target) {
-            run_drives(clk, target);
+            run_drives(clk);
         } else {
-            run_drives(ps2m_floor(upto), upto);
+            run_drives(ps2m_floor(upto));
         }
         done_ps = upto;
         simlink_progress(sl, sl_slot, done_ps + 1);
@@ -295,6 +287,7 @@ static void sl_stop(void)
         alarm_unset(sl_alarm);
     }
     drive_ext_sync_remove(ext_sync);
+    drive_ext_exact = 0;
     drive_ext_iec_changed = NULL;
     iecbus_ext_active = 0;
 }
@@ -354,6 +347,7 @@ static void sl_start(void)
     simlink_progress(sl, sl_slot, done_ps);
 
     drive_ext_iec_changed = iecbus_ext_drive_changed;
+    drive_ext_exact = 1;
     drive_ext_sync_add(ext_sync);
     if (!sl_alarm) {
         sl_alarm = alarm_new(maincpu_alarm_context, "IECSimlink", sl_alarm_handler, NULL);

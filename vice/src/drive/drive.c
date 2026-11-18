@@ -1030,6 +1030,41 @@ int drive_num_leds(unsigned int dnr)
 /* simlink: ein Laufwerk hat seine IEC-Ausgaenge geaendert (dnr) */
 void (*drive_ext_iec_changed)(unsigned int dnr) = NULL;
 
+/* simlink: genaue Zeit gefordert (Leerlauf-Vorspulen aus) */
+int drive_ext_exact = 0;
+
+/* simlink: Zusammenhang Haupttakt -> Laufwerkstakt festhalten. VICE laesst das
+   Laufwerk fuer Haupttakt c bis zum Laufwerkstakt
+       S(c) = stop_clk + (accum + sync_factor * (c - last_clk)) / 65536
+   laufen (Rest wird mitgefuehrt) - unabhaengig davon, in welchen Schritten
+   nachgezogen wird. */
+void drive_sync_snapshot(diskunit_context_t *unit, drive_sync_snap_t *s)
+{
+    s->last_clk = unit->cpu->last_clk;
+    s->stop_clk = unit->cpu->stop_clk;
+    s->accum = unit->cpu->cycle_accum;
+    s->sync_factor = (unsigned int)unit->cpud->sync_factor;
+}
+
+/* kleinster Haupttakt c mit S(c) > dclk: der Haupttakt, zu dem ein Ereignis
+   bei Laufwerkstakt dclk gehoert (gleich, wie nachgezogen wurde) */
+CLOCK drive_sync_main_clock(const drive_sync_snap_t *s, CLOCK dclk)
+{
+    unsigned __int128 need;
+    CLOCK d;
+
+    if (s->sync_factor == 0) {
+        return s->last_clk;
+    }
+    d = (dclk >= s->stop_clk) ? dclk - s->stop_clk : 0;
+    need = (unsigned __int128)(d + 1) * 65536u;
+    if (need <= s->accum) {
+        return s->last_clk;
+    }
+    need -= s->accum;
+    return s->last_clk + (CLOCK)((need + s->sync_factor - 1) / s->sync_factor);
+}
+
 #define DRIVE_EXT_SYNC_MAX 2
 static void (*drive_ext_sync_hooks[DRIVE_EXT_SYNC_MAX])(CLOCK clk_value);
 static int drive_ext_sync_count = 0;

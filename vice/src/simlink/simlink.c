@@ -46,6 +46,11 @@ typedef struct {
     _Atomic uint64_t wait_until; /* != 0: wartet auf Aenderung, spaetestens bis hier */
     _Atomic uint64_t react_ps;  /* beim Warten: fruehestens so lange nach einer Aenderung */
     _Atomic uint32_t wait_mask; /* beim Warten: auf welche Leitungen */
+    _Atomic uint64_t wait_from; /* beim Warten: ab wann */
+    _Atomic uint64_t wake_ps;   /* fruehestes Umschalten einer beobachteten Leitung
+                                   durch einen anderen ab wait_from (UINT64_MAX: keins);
+                                   setzt der Schreiber selbst */
+    _Atomic uint32_t wait_scanned; /* Ring einmal durchgesehen */
     sl_entry_t ring[SIMLINK_RING];
 } sl_part_t;
 
@@ -252,6 +257,9 @@ int simlink_attach(simlink_t *sl, uint8_t type, int clockmaster)
     atomic_store(&p->head, 1);
     atomic_store(&p->wait_until, 0);
     atomic_store(&p->wait_mask, 0);
+    atomic_store(&p->wait_from, 0);
+    atomic_store(&p->wake_ps, UINT64_MAX);
+    atomic_store(&p->wait_scanned, 0);
     atomic_store(&p->react_ps, 0);
     atomic_store(&p->time_ps, start);
     sl->cur_state[slot] = 0;
@@ -272,7 +280,10 @@ void simlink_detach(simlink_t *sl, int slot)
 }
 
 /* kleinste Fortschrittszeit der anderen aktiven Teilnehmer; *err bei ERROR */
-/* reiner Fortschritt (fuer das Freigeben von Ringeintraegen) */
+/* Grenze fuer das Freigeben von Ringeintraegen: der reine Fortschritt der
+   anderen. Ein Wartender braucht alte Eintraege nicht (der Schreiber setzt
+   ihm die Weckzeit selbst), nur bis zu seinem ersten Durchsehen und ab seiner
+   Weckzeit. */
 static uint64_t min_other_raw(sl_shm_t *shm, int self, int *err)
 {
     uint64_t m = UINT64_MAX;
@@ -292,6 +303,13 @@ static uint64_t min_other_raw(sl_shm_t *shm, int self, int *err)
             *err = 1;
         }
         t = atomic_load_explicit(&p->time_ps, memory_order_acquire);
+        if (atomic_load_explicit(&p->wait_until, memory_order_acquire)
+            && atomic_load_explicit(&p->wait_scanned, memory_order_acquire)) {
+            uint64_t wk = atomic_load_explicit(&p->wake_ps, memory_order_acquire);
+            if (wk > t) {
+                t = wk;
+            }
+        }
         if (t < m) {
             m = t;
         }
@@ -305,7 +323,7 @@ static uint64_t min_other_raw(sl_shm_t *shm, int self, int *err)
 static uint64_t next_activity(sl_part_t *q, uint64_t from, uint8_t mask, int *real)
 {
     uint64_t prog = atomic_load_explicit(&q->time_ps, memory_order_acquire);
-    uint32_t head = atomic_load_explicit(&q->head, memory_order_acquire);
+    uint32_t head = atomic_load_explicit(&q->head, memory_order_seq_cst);
     uint64_t best = prog > from ? prog : from;
     uint32_t k;
 
@@ -345,22 +363,31 @@ static uint64_t effective(sl_shm_t *shm, int pi)
     uint64_t prog = atomic_load_explicit(&p->time_ps, memory_order_acquire);
     uint64_t w = atomic_load_explicit(&p->wait_until, memory_order_acquire);
     uint64_t react, c = UINT64_MAX, e;
-    uint8_t mask;
     int i;
 
-    if (w == 0) {
+    if (w == 0 || !atomic_load_explicit(&p->wait_scanned, memory_order_acquire)) {
         return prog;
     }
     react = atomic_load_explicit(&p->react_ps, memory_order_acquire);
-    mask = (uint8_t)atomic_load_explicit(&p->wait_mask, memory_order_acquire);
+    /* naechste Aktivitaet der anderen: bekanntes Umschalten (Weckzeit) oder,
+       solange keins bekannt ist, deren Fortschritt (davor kommt nichts mehr) */
     for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
         uint64_t a;
         if (i == pi || !active(&shm->part[i])) {
             continue;
         }
-        a = next_activity(&shm->part[i], prog, mask, NULL);
+        a = atomic_load_explicit(&shm->part[i].time_ps, memory_order_acquire);
+        if (a < prog) {
+            a = prog;
+        }
         if (a < c) {
             c = a;
+        }
+    }
+    {
+        uint64_t wk = atomic_load_explicit(&p->wake_ps, memory_order_acquire);
+        if (wk < c) {
+            c = wk;
         }
     }
     e = (c > UINT64_MAX - react) ? UINT64_MAX : c + react;
@@ -399,13 +426,62 @@ static uint64_t min_other(sl_shm_t *shm, int self, int *err)
 
 /* Neuen Ringeintrag anhaengen; wartet, falls der Ring voll ist, d. h. ein
    langsamer Leser die aeltesten Eintraege noch braucht. */
+/* Wartende wecken: schaltet ein Eintrag bei t eine Leitung um, auf die ein
+   anderer wartet, traegt der Schreiber t als dessen Weckzeit ein. Erst nach
+   dem Schreiben des Eintrags (seq_cst): entweder sieht der Schreiber das
+   Wartezeichen, oder der Wartende sieht beim Durchsehen den Eintrag. */
+static void wake_waiters(simlink_t *sl, int slot, uint64_t t, uint8_t changed)
+{
+    sl_shm_t *shm = sl->shm;
+    int i;
+
+    for (i = 0; changed && i < SIMLINK_MAX_PARTS; i++) {
+        sl_part_t *w = &shm->part[i];
+        uint64_t old;
+        if (i == slot || !atomic_load_explicit(&w->wait_until, memory_order_seq_cst)) {
+            continue;
+        }
+        if (!(changed & (uint8_t)atomic_load_explicit(&w->wait_mask, memory_order_acquire))
+            || t < atomic_load_explicit(&w->wait_from, memory_order_acquire)) {
+            continue;
+        }
+        old = atomic_load_explicit(&w->wake_ps, memory_order_acquire);
+        while (t < old && !atomic_compare_exchange_weak(&w->wake_ps, &old, t)) {
+        }
+    }
+}
+
 static void append(simlink_t *sl, int slot, uint64_t t)
 {
     sl_shm_t *shm = sl->shm;
     sl_part_t *p = &shm->part[slot];
     uint32_t head = atomic_load_explicit(&p->head, memory_order_relaxed);
     sl_entry_t *last = &p->ring[(head - 1) % SIMLINK_RING];
+    uint64_t prog = atomic_load_explicit(&p->time_ps, memory_order_relaxed);
     unsigned n = 0;
+    uint8_t wake_changed;
+
+    /* Regel: vor dem eigenen Fortschritt ist alles endgueltig. Ein spaeterer
+       Eintrag mit kleinerer Zeit wuerde sie brechen (die anderen koennten den
+       Stand dort schon gelesen haben) - also auf den Fortschritt anheben.
+       Ebenso nie vor den letzten eigenen Eintrag. */
+    if (t < prog) {
+        t = prog;
+    }
+    if (t < last->time_ps) {
+        t = last->time_ps;
+    }
+
+    /* Ausgangsstand vor diesem Eintrag (fuer das Wecken) */
+    {
+        uint32_t base;
+        if (last->time_ps == t) {
+            base = (head >= 2) ? p->ring[(head - 2) % SIMLINK_RING].state : 0;
+        } else {
+            base = last->state;
+        }
+        wake_changed = (uint8_t)(ST_PULL(base) ^ ST_PULL(sl->cur_state[slot]));
+    }
 
     if (last->time_ps == t) {
         /* gleiche Zeit: letzten Eintrag ueberschreiben. Sicher, weil Leser nur
@@ -413,7 +489,8 @@ static void append(simlink_t *sl, int slot, uint64_t t)
            als Fortschritt ueberschritten haben. */
         last->state = sl->cur_state[slot];
         last->pulses = sl->cur_pulses[slot];
-        atomic_thread_fence(memory_order_release);
+        atomic_thread_fence(memory_order_seq_cst);
+        wake_waiters(sl, slot, t, wake_changed);
         return;
     }
     /* Platz pruefen: Eintrag head-RING wird ueberschrieben. Er darf weg, wenn
@@ -435,7 +512,8 @@ static void append(simlink_t *sl, int slot, uint64_t t)
         e->state = sl->cur_state[slot];
         e->pulses = sl->cur_pulses[slot];
     }
-    atomic_store_explicit(&p->head, head + 1, memory_order_release);
+    atomic_store_explicit(&p->head, head + 1, memory_order_seq_cst);
+    wake_waiters(sl, slot, t, wake_changed);
 }
 
 void simlink_set(simlink_t *sl, int slot, uint64_t t_ps, uint8_t pull, uint8_t data)
@@ -665,37 +743,46 @@ int simlink_wait_change(simlink_t *sl, int slot, uint64_t t_from, uint8_t mask,
     sl_part_t *me = &shm->part[slot];
     uint64_t dl = deadline ? deadline : UINT64_MAX - 1;
     unsigned n = 0;
-    int waited = 0;
+    int waited = 0, i;
 
-    /* erst Reaktionszeit, Leitungen und Fortschritt, dann das Wartezeichen */
+    /* erst alle Angaben und den Fortschritt, dann das Wartezeichen */
+    atomic_store_explicit(&me->wait_scanned, 0, memory_order_release);
+    atomic_store_explicit(&me->wake_ps, UINT64_MAX, memory_order_release);
     atomic_store_explicit(&me->react_ps, react_ps, memory_order_release);
     atomic_store_explicit(&me->wait_mask, mask, memory_order_release);
+    atomic_store_explicit(&me->wait_from, t_from, memory_order_release);
     simlink_progress(sl, slot, t_from);
-    atomic_store_explicit(&me->wait_until, dl, memory_order_release);
+    atomic_store_explicit(&me->wait_until, dl, memory_order_seq_cst);
+
+    /* einmal durchsehen, was die anderen schon geschrieben haben, bevor sie
+       das Wartezeichen sehen konnten; danach wecken sie selbst */
+    for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
+        uint64_t a, old;
+        int real = 0;
+        if (i == slot || !active(&shm->part[i])) {
+            continue;
+        }
+        a = next_activity(&shm->part[i], t_from, mask, &real);
+        if (!real) {
+            continue;
+        }
+        old = atomic_load_explicit(&me->wake_ps, memory_order_acquire);
+        while (a < old && !atomic_compare_exchange_weak(&me->wake_ps, &old, a)) {
+        }
+    }
+    atomic_store_explicit(&me->wait_scanned, 1, memory_order_seq_cst);
 
     for (;;) {
-        int err = 0, i;
+        int err = 0;
         uint64_t m = min_other(shm, slot, &err);
-        uint64_t best = UINT64_MAX;
+        uint64_t wk = atomic_load_explicit(&me->wake_ps, memory_order_acquire);
 
-        /* fruehestes Umschalten einer beobachteten Leitung bei einem anderen
-           ab t_from; endgueltig ist es, wenn es vor m liegt */
-        for (i = 0; i < SIMLINK_MAX_PARTS; i++) {
-            uint64_t a;
-            int real = 0;
-            if (i == slot || !active(&shm->part[i])) {
-                continue;
-            }
-            a = next_activity(&shm->part[i], t_from, mask, &real);
-            if (real && a < best) {
-                best = a;
-            }
-        }
-        if (best < m && best < dl) {
+        /* endgueltig, wenn vor dem Fortschritt aller anderen */
+        if (wk < m && wk < dl) {
             if (waited) {
                 sl->waits++;
             }
-            *t_change = best;
+            *t_change = wk;
             return 1;
         }
         if (m >= dl || err) {
@@ -713,8 +800,11 @@ int simlink_wait_change(simlink_t *sl, int slot, uint64_t t_from, uint8_t mask,
 void simlink_wait_end(simlink_t *sl, int slot, uint64_t t_now)
 {
     sl_part_t *me = &sl->shm->part[slot];
-    /* erst den neuen Fortschritt, dann das Wartezeichen loeschen: so faellt
-       der fuer die anderen sichtbare Fortschritt nie zurueck */
+    /* Reihenfolge: erst das Wartezeichen loeschen, dann den Fortschritt
+       setzen. Die anderen lesen erst den Fortschritt, dann das Zeichen; so
+       sehen sie nie den neuen Fortschritt zusammen mit dem alten Zeichen
+       (das waere eine zu weite Zusage). Kurzzeitig sehen sie den alten
+       Fortschritt ohne Zeichen - das ist nur vorsichtiger. */
+    atomic_store_explicit(&me->wait_until, 0, memory_order_seq_cst);
     simlink_progress(sl, slot, t_now);
-    atomic_store_explicit(&me->wait_until, 0, memory_order_release);
 }

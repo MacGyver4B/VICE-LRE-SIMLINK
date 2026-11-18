@@ -65,6 +65,26 @@ done
 if cmp -s ieee1.trace ieee2.trace; then ok "Busspuren gleich ($(wc -l < ieee1.trace) Wechsel)"; else bad "Busspuren verschieden"; fi
 shm_rm chk488
 
+echo "IEEE gemischt (xpet + 2031 auf 8 + ieeedev auf 9):"
+for i in 1 2; do
+    shm_rm chkmix
+    cp disk.d64 mix$i.d64
+    rm -f mixcopy$i
+    "$WORK/ieeedev" -v -v -u 9 chkmix > mix$i.trace 2>&1 &
+    D=$!
+    sleep 0.3
+    timeout 300 "$SRC/xpet" -default -directory "$DATA" +sound -model 4032 \
+        -drive8type 2031 -drive8truedrive -8 mix$i.d64 +busdevice8 +busdevice9 \
+        -ieeesimlink chkmix -warp -limitcycles 60000000 \
+        -keybuf 'load"big",8\nsave"m",9\nload"m",9\nsave"back",8\n' > mix$i.log 2>&1
+    kill $D 2>/dev/null; wait $D 2>/dev/null
+    "$SRC/c1541" -attach mix$i.d64 -read back mixcopy$i >/dev/null 2>&1
+    if cmp -s big m && cmp -s big mixcopy$i; then ok "Lauf $i: 8 -> 9 -> 8 bytegleich"; else bad "Lauf $i"; fi
+    rm -f m
+done
+if cmp -s mix1.trace mix2.trace; then ok "Busspuren gleich ($(wc -l < mix1.trace) Wechsel)"; else bad "Busspuren verschieden"; fi
+shm_rm chkmix
+
 echo "IEC (xdrive + 1541 + iechost):"
 for i in 1 2; do
     shm_rm chkiec

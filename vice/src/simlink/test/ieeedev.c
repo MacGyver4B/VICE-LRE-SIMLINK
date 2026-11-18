@@ -78,6 +78,18 @@ static void pull_off(uint8_t m)
     drive(my_pull & (uint8_t)~m, my_data);
 }
 
+/* statt jede Schrittzeit nachzusehen: auf das naechste Umschalten einer der
+   Leitungen in mask warten (Vorausschau: wir reagieren fruehestens einen
+   Schritt danach), dann lesen */
+static void tick_change(uint8_t mask)
+{
+    uint64_t tc;
+    simlink_wait_change(sl, slot, t_ps, mask, step_ps, 0, &tc);
+    simlink_wait_end(sl, slot, tc + step_ps);
+    t_ps = tc;
+    tick();
+}
+
 #define LOW(m)  (bus & (m))
 
 /* ---- Dateien ---------------------------------------------------------- */
@@ -143,8 +155,12 @@ static int listen_byte(int under_atn, int *eoi)
     int b;
     /* bereit: NRFD frei, NDAC gezogen */
     drive((uint8_t)((my_pull | SL_IEEE_NDAC) & ~SL_IEEE_NRFD & ~SL_IEEE_DAV & ~SL_IEEE_EOI), 0);
-    for (;;) {
-        tick();
+    for (int first = 1;; first = 0) {
+        if (first) {
+            tick();
+        } else {
+            tick_change(SL_IEEE_ATN | SL_IEEE_DAV);
+        }
         if (!!LOW(SL_IEEE_ATN) != under_atn) {
             return -1;
         }
@@ -156,8 +172,12 @@ static int listen_byte(int under_atn, int *eoi)
     b = bus_data;
     *eoi = LOW(SL_IEEE_EOI) ? 1 : 0;
     pull_off(SL_IEEE_NDAC);
-    for (;;) {
-        tick();
+    for (int first = 1;; first = 0) {
+        if (first) {
+            tick();
+        } else {
+            tick_change(SL_IEEE_ATN | SL_IEEE_DAV);
+        }
         if (!LOW(SL_IEEE_DAV)) {
             break;
         }
@@ -173,8 +193,12 @@ static int listen_byte(int under_atn, int *eoi)
 static int talk_byte(int b, int eoi)
 {
     /* warten, bis alle Hoerer bereit (NRFD frei) */
-    for (;;) {
-        tick();
+    for (int first = 1;; first = 0) {
+        if (first) {
+            tick();
+        } else {
+            tick_change(SL_IEEE_ATN | SL_IEEE_NRFD);
+        }
         if (LOW(SL_IEEE_ATN)) {
             return -1;
         }
@@ -185,8 +209,12 @@ static int talk_byte(int b, int eoi)
     drive((uint8_t)(my_pull | (eoi ? SL_IEEE_EOI : 0)), (uint8_t)b);
     tick();
     pull_on(SL_IEEE_DAV);
-    for (;;) {
-        tick();
+    for (int first = 1;; first = 0) {
+        if (first) {
+            tick();
+        } else {
+            tick_change(SL_IEEE_ATN | SL_IEEE_NDAC);
+        }
         if (LOW(SL_IEEE_ATN)) {
             drive((uint8_t)(my_pull & ~(SL_IEEE_DAV | SL_IEEE_EOI)), 0);
             return -1;
@@ -349,7 +377,10 @@ int main(int argc, char **argv)
             }
             continue;
         }
-        /* unbeteiligt: alle Leitungen frei */
+        /* unbeteiligt: alle Leitungen frei, bis ATN kommt */
         drive(0, 0);
+        if (!LOW(SL_IEEE_ATN)) {
+            tick_change(SL_IEEE_ATN);
+        }
     }
 }

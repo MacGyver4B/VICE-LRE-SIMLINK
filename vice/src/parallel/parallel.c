@@ -501,7 +501,7 @@ void parallel_set_eoi(uint8_t mask)
     parallel_eoi |= mask;
 
     PARALLEL_LINE_DEBUG_SET(eoi, EOI)
-    parallel_ext_notify();
+    parallel_ext_notify(mask);
 }
 
 void parallel_clr_eoi(uint8_t mask)
@@ -512,7 +512,7 @@ void parallel_clr_eoi(uint8_t mask)
     parallel_eoi &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(eoi, EOI)
-    parallel_ext_notify();
+    parallel_ext_notify((uint8_t)~mask);
 }
 
 static void parallel_atn_signal(int st)
@@ -532,7 +532,7 @@ void parallel_set_atn(uint8_t mask)
     parallel_atn |= mask;
 
     PARALLEL_LINE_DEBUG_SET(atn, ATN)
-    parallel_ext_notify();
+    parallel_ext_notify(mask);
 
     /* if ATN went active, signal to attached devices */
     if (!old) {
@@ -549,7 +549,7 @@ void parallel_clr_atn(uint8_t mask)
     parallel_atn &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(atn, ATN)
-    parallel_ext_notify();
+    parallel_ext_notify((uint8_t)~mask);
 
     /* if ATN went inactive, signal to attached devices */
     if (old && !parallel_atn) {
@@ -599,7 +599,7 @@ void parallel_set_dav(uint8_t mask)
     parallel_dav |= mask;
 
     PARALLEL_LINE_DEBUG_SET(dav, DAV)
-    parallel_ext_notify();
+    parallel_ext_notify(mask);
 
     if (parallel_emu && !old) {
         DoTrans(DAV_true);
@@ -612,7 +612,7 @@ void parallel_clr_dav(uint8_t mask)
     parallel_dav &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(dav, DAV)
-    parallel_ext_notify();
+    parallel_ext_notify((uint8_t)~mask);
 
     if (parallel_emu && old && !parallel_dav) {
         DoTrans(DAV_false);
@@ -625,7 +625,7 @@ void parallel_set_nrfd(uint8_t mask)
     parallel_nrfd |= mask;
 
     PARALLEL_LINE_DEBUG_SET(nrfd, NRFD)
-    parallel_ext_notify();
+    parallel_ext_notify(mask);
 
     if (parallel_emu && !old) {
         DoTrans(NRFD_true);
@@ -638,7 +638,7 @@ void parallel_clr_nrfd(uint8_t mask)
     parallel_nrfd &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(nrfd, NRFD)
-    parallel_ext_notify();
+    parallel_ext_notify((uint8_t)~mask);
 
     if (parallel_emu && old && !parallel_nrfd) {
         DoTrans(NRFD_false);
@@ -651,7 +651,7 @@ void parallel_set_ndac(uint8_t mask)
     parallel_ndac |= mask;
 
     PARALLEL_LINE_DEBUG_SET(ndac, NDAC)
-    parallel_ext_notify();
+    parallel_ext_notify(mask);
 
     if (parallel_emu && !old) {
         DoTrans(NDAC_true);
@@ -664,7 +664,7 @@ void parallel_clr_ndac(uint8_t mask)
     parallel_ndac &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(ndac, NDAC)
-    parallel_ext_notify();
+    parallel_ext_notify((uint8_t)~mask);
 
     if (parallel_emu && old && !parallel_ndac) {
         DoTrans(NDAC_false);
@@ -697,24 +697,22 @@ uint8_t parallel_bus_vice(void)
            par_drv_bus[2] & par_drv_bus[3];
 }
 
-static void parallel_recalc_bus(int from_ext)
+static void parallel_recalc_bus(uint8_t who)
 {
     parallel_bus = parallel_bus_vice() & par_ext_bus;
-    if (!from_ext) {
-        parallel_ext_notify();
-    }
+    parallel_ext_notify(who);
 }
 
 void parallel_ext_set_bus(uint8_t b)
 {
     par_ext_bus = b;
-    parallel_recalc_bus(1);
+    parallel_recalc_bus(PARALLEL_EXT);
 }
 
 void parallel_emu_set_bus(uint8_t b)
 {
     par_emu_bus = b;
-    parallel_recalc_bus(0);
+    parallel_recalc_bus(PARALLEL_EMU);
 
     PARALLEL_DEBUG_SET_BUS(emu)
 }
@@ -722,7 +720,7 @@ void parallel_emu_set_bus(uint8_t b)
 void parallel_cpu_set_bus(uint8_t b)
 {
     par_cpu_bus = b;
-    parallel_recalc_bus(0);
+    parallel_recalc_bus(PARALLEL_CPU);
 
     PARALLEL_DEBUG_SET_BUS(cpu)
 }
@@ -730,7 +728,7 @@ void parallel_cpu_set_bus(uint8_t b)
 void parallel_drv0_set_bus(uint8_t b)
 {
     par_drv_bus[0] = b;
-    parallel_recalc_bus(0);
+    parallel_recalc_bus(PARALLEL_DRV0);
 
     PARALLEL_DEBUG_SET_BUS(drv0)
 }
@@ -738,7 +736,7 @@ void parallel_drv0_set_bus(uint8_t b)
 void parallel_drv1_set_bus(uint8_t b)
 {
     par_drv_bus[1] = b;
-    parallel_recalc_bus(0);
+    parallel_recalc_bus(PARALLEL_DRV1);
 
     PARALLEL_DEBUG_SET_BUS(drv1)
 }
@@ -746,7 +744,7 @@ void parallel_drv1_set_bus(uint8_t b)
 void parallel_drv2_set_bus(uint8_t b)
 {
     par_drv_bus[2] = b;
-    parallel_recalc_bus(0);
+    parallel_recalc_bus(PARALLEL_DRV2);
 
     PARALLEL_DEBUG_SET_BUS(drv2)
 }
@@ -754,7 +752,7 @@ void parallel_drv2_set_bus(uint8_t b)
 void parallel_drv3_set_bus(uint8_t b)
 {
     par_drv_bus[3] = b;
-    parallel_recalc_bus(0);
+    parallel_recalc_bus(PARALLEL_DRV3);
 
     PARALLEL_DEBUG_SET_BUS(drv3)
 }

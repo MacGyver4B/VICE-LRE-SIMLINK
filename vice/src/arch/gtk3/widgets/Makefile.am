@@ -130,6 +130,7 @@ libwidgets_a_SOURCES = \
 	settings_expert.c \
 	settings_finalexpansion.c \
 	settings_fsdevice.c \
+	settings_ieeesimlink.c \
 	settings_georam.c \
 	settings_gmod2.c \
 	settings_gmod2c128.c \
@@ -308,6 +309,7 @@ EXTRA_DIST = \
 	settings_expert.h \
 	settings_finalexpansion.h \
 	settings_fsdevice.h \
+	settings_ieeesimlink.h \
 	settings_georam.h \
 	settings_gmod2.h \
 	settings_gmod2c128.h \

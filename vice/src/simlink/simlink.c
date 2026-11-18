@@ -1,20 +1,32 @@
 /*
- * simlink - Implementierung (POSIX-Shared-Memory, C11-Atomics)
+ * simlink - Implementierung (gemeinsamer Speicher, C11-Atomics)
+ *
+ * POSIX:   shm_open("/simlink-<name>") + mmap
+ * Windows: CreateFileMapping("Local\\simlink-<name>") + MapViewOfFile
+ *          (der Speicher verschwindet, wenn der letzte Teilnehmer schliesst)
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
 #include "simlink.h"
 
-#include <fcntl.h>
-#include <sched.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sched.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #define SIMLINK_MAGIC 0x4B4E4C53u /* "SLNK" */
 
@@ -50,6 +62,9 @@ typedef struct {
 struct simlink_s {
     sl_shm_t *shm;
     char      name[64];
+#ifdef _WIN32
+    HANDLE    map;
+#endif
     uint32_t  cur_state[SIMLINK_MAX_PARTS];   /* eigener Stand (nur eigener Slot genutzt) */
     uint32_t  cur_pulses[SIMLINK_MAX_PARTS];
     uint32_t  rd_pulses[SIMLINK_MAX_PARTS];   /* beim letzten Lesen gesehene Zaehler der anderen */
@@ -64,18 +79,61 @@ struct simlink_s {
 static void spin(unsigned *n)
 {
     if (++*n > 200) {
+#ifdef _WIN32
+        SwitchToThread();
+#else
         sched_yield();
+#endif
     }
 }
 
-simlink_t *simlink_open(const char *name, int bus, int create, uint8_t line_mask)
-{
-    char path[64];
-    int fd;
-    simlink_t *sl;
-    sl_shm_t *shm;
+/* Plattformschicht: Speicher anlegen/oeffnen. *fresh = 1, wenn neu angelegt. */
+#ifdef _WIN32
 
-    snprintf(path, sizeof(path), "/simlink-%.40s", name);
+static sl_shm_t *map_open(const char *name, int create, HANDLE *h, int *fresh)
+{
+    char path[80];
+    void *p;
+
+    snprintf(path, sizeof(path), "Local\\simlink-%.40s", name);
+    *fresh = 0;
+    if (create) {
+        *h = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
+                                0, (DWORD)sizeof(sl_shm_t), path);
+        if (*h != NULL && GetLastError() != ERROR_ALREADY_EXISTS) {
+            *fresh = 1;     /* neu: Windows liefert ihn genullt */
+        }
+    } else {
+        *h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, path);
+    }
+    if (*h == NULL) {
+        return NULL;
+    }
+    p = MapViewOfFile(*h, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(sl_shm_t));
+    if (p == NULL) {
+        CloseHandle(*h);
+        *h = NULL;
+        return NULL;
+    }
+    return (sl_shm_t *)p;
+}
+
+static void map_close(simlink_t *sl, int unlink_bus)
+{
+    (void)unlink_bus;   /* entfaellt: verschwindet mit dem letzten Handle */
+    UnmapViewOfFile(sl->shm);
+    CloseHandle(sl->map);
+}
+
+#else
+
+static sl_shm_t *map_open(const char *name, int create, char *path, int *fresh)
+{
+    int fd;
+    void *p;
+
+    snprintf(path, 64, "/simlink-%.40s", name);
+    *fresh = create;
     fd = shm_open(path, O_RDWR | (create ? O_CREAT : 0), 0600);
     if (fd < 0) {
         return NULL;
@@ -84,12 +142,43 @@ simlink_t *simlink_open(const char *name, int bus, int create, uint8_t line_mask
         close(fd);
         return NULL;
     }
-    shm = mmap(NULL, sizeof(sl_shm_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    p = mmap(NULL, sizeof(sl_shm_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
-    if (shm == MAP_FAILED) {
+    return p == MAP_FAILED ? NULL : (sl_shm_t *)p;
+}
+
+static void map_close(simlink_t *sl, int unlink_bus)
+{
+    munmap(sl->shm, sizeof(*sl->shm));
+    if (unlink_bus) {
+        shm_unlink(sl->name);
+    }
+}
+
+#endif
+
+simlink_t *simlink_open(const char *name, int bus, int create, uint8_t line_mask)
+{
+    simlink_t *sl;
+    sl_shm_t *shm;
+    int fresh;
+
+    sl = calloc(1, sizeof(*sl));
+    if (!sl) {
         return NULL;
     }
-    if (create) {
+#ifdef _WIN32
+    snprintf(sl->name, sizeof(sl->name), "%.40s", name);
+    shm = map_open(name, create, &sl->map, &fresh);
+#else
+    shm = map_open(name, create, sl->name, &fresh);
+#endif
+    if (!shm) {
+        free(sl);
+        return NULL;
+    }
+    sl->shm = shm;
+    if (fresh) {
         memset(shm, 0, sizeof(*shm));
         shm->version = SIMLINK_VERSION;
         shm->bus = (uint8_t)bus;
@@ -98,12 +187,10 @@ simlink_t *simlink_open(const char *name, int bus, int create, uint8_t line_mask
         shm->magic = SIMLINK_MAGIC;
     } else if (shm->magic != SIMLINK_MAGIC || shm->version != SIMLINK_VERSION
                || shm->bus != (uint8_t)bus) {
-        munmap(shm, sizeof(*shm));
+        map_close(sl, 0);
+        free(sl);
         return NULL;
     }
-    sl = calloc(1, sizeof(*sl));
-    sl->shm = shm;
-    memcpy(sl->name, path, sizeof(path));
     return sl;
 }
 
@@ -112,10 +199,7 @@ void simlink_close(simlink_t *sl, int unlink_bus)
     if (!sl) {
         return;
     }
-    munmap(sl->shm, sizeof(*sl->shm));
-    if (unlink_bus) {
-        shm_unlink(sl->name);
-    }
+    map_close(sl, unlink_bus);
     free(sl);
 }
 

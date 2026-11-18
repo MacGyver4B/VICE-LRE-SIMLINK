@@ -37,9 +37,9 @@
 #include "types.h"
 #include "util.h"
 
-#if !defined(_WIN32) && !defined(__MSDOS__)
+#if !defined(__MSDOS__)
 #define HAVE_SIMLINK 1
-#include "simlink.c"
+#include "simlink.h"
 #endif
 
 void (*parallel_ext_srq_hook)(int active, CLOCK clk) = NULL;
@@ -100,6 +100,8 @@ static uint8_t vice_pull(void)
 
 static void sl_alarm_handler(CLOCK offset, void *data);
 
+static int stopping = 0;
+
 static void sl_stop(void)
 {
     if (sl) {
@@ -107,6 +109,19 @@ static void sl_stop(void)
         simlink_close(sl, 0);
         sl = NULL;
         sl_slot = -1;
+        /* Leitungen des externen Teilnehmers freigeben (ohne neu zu verbinden) */
+        stopping = 1;
+        parallel_clr_atn((uint8_t)~PARALLEL_EXT);
+        parallel_clr_dav((uint8_t)~PARALLEL_EXT);
+        parallel_clr_nrfd((uint8_t)~PARALLEL_EXT);
+        parallel_clr_ndac((uint8_t)~PARALLEL_EXT);
+        parallel_clr_eoi((uint8_t)~PARALLEL_EXT);
+        parallel_ext_set_bus(0xff);
+        stopping = 0;
+        if (ext_srq && parallel_ext_srq_hook) {
+            parallel_ext_srq_hook(0, maincpu_clk);
+        }
+        ext_srq = 0;
     }
     if (sl_alarm) {
         alarm_unset(sl_alarm);
@@ -161,6 +176,9 @@ static void sl_start(void)
 /* Bei jeder Leitungsaenderung von PET oder Laufwerk aufgerufen. */
 void parallel_ext_notify(void)
 {
+    if (stopping) {
+        return;
+    }
     if (!started) {
         sl_start();
     }

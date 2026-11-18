@@ -2,7 +2,7 @@
 
 Kopplung von Emulatoren auf Leitungsebene für IEEE-488 und den seriellen IEC-Bus (mit optionalem Parallelkabel). Gedacht für xpet, `xdrive` (VICE-Laufwerke ohne Rechner), picoem (RP2350) und AVR-Simulatoren.
 
-Stand: Version 1, 2026-11-18. Nur Linux/POSIX (Shared Memory über `shm_open`); Windows folgt.
+Stand: Version 1, 2026-11-18. Linux/macOS (POSIX `shm_open`) und Windows (`CreateFileMapping`, MinGW).
 
 ## Prinzip
 
@@ -67,7 +67,13 @@ xpet -ieeesimlink <bus> [-ieeesimlinkstep <takte>]
   durch PET oder Laufwerk.
 - Fuer die extern bediente Geraeteadresse die eingebaute Geraeteemulation
   abschalten (`+busdevice<n>`, kein Laufwerk auf dieser Adresse).
-- Nur POSIX (Linux, macOS); unter Windows ist die Funktion vorerst leer.
+- Linux/macOS: POSIX-Shared-Memory (`/dev/shm/simlink-<name>` unter Linux;
+  bleibt nach einem Absturz liegen und wird beim naechsten Anlegen neu
+  initialisiert).
+- Windows (MinGW, auch GTK-Version): benannte Dateizuordnung
+  `Local\simlink-<name>`; verschwindet, wenn der letzte Teilnehmer schliesst.
+  Alle Teilnehmer muessen in derselben Benutzersitzung laufen.
+- GTK3: Einstellungen → Peripheral devices → External IEEE-488 (simlink).
 - Grenze v1: Laufwerke mit True-Drive-Emulation in VICE werden mit dem
   Takt des PET gestempelt (Laufwerke laufen in VICE nachgezogen), nicht
   mit ihrem eigenen.
@@ -79,6 +85,12 @@ Bibliothek allein (zwei Prozesse):
 ```
 cc -O2 -std=c11 -I. -o sltest test/sltest.c simlink.c -lpthread
 test/run.sh
+```
+
+Windows-Fassung der Tests (Cross-Build, z. B. unter Wine pruefbar):
+
+```
+x86_64-w64-mingw32-gcc -O2 -std=c11 -I. -o sltest.exe test/sltest.c simlink.c -static -lpthread
 ```
 
 Testgeraet am IEEE-Bus (Protokollebene, Dateien im Arbeitsverzeichnis):
@@ -99,3 +111,6 @@ xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
   gleichzeitig: Kopieren 8 → 9 → 8 fehlerfrei.
 - Ohne `-ieeesimlink` unveraendert: Dateisystemgeraet und 2031 (TDE)
   laden und speichern wie vorher.
+- Windows-Fassung der Bibliothek (MinGW, unter Wine 9.0): Handshake-Test
+  ohne Fehler, emulierte Zeit in beiden Laeufen identisch; Ringtest ohne
+  Abweichungen. Unter Wine deutlich langsamer als nativ unter Linux.

@@ -224,6 +224,32 @@ aus Bank 2 des CRT-Abbilds; er steht nicht im Repo.
   TALK schnell.
 - `AR_DUMP=datei`: zuletzt geladene bzw. zu speichernde Datei ablegen.
 
+Referenz petSD+ (`test/petsdsim.c`): die unveraenderte NODISKEMU-Firmware
+(ATmega1284P, 8 MHz) in simavr am IEEE-Bus, SD-Karte als Image-Datei
+(MBR + FAT16, SDHC-Blockadressen). Eingaenge vom Bus wirken 2 us spaeter
+(`-l`), damit beide Seiten je Runde um diese Vorausschau vorankommen; das
+laeuft schneller als Echtzeit und aendert die gemessenen Zeiten nicht
+(0,25 us ergab dasselbe). Ab Werk Geraet 11 (Menuesystem), Adresse per
+`U0>`; das EEPROM wird nicht gespeichert.
+
+```
+make CONFIG=configs/config-petSD+          # im NODISKEMU-Baum
+cc -O2 -std=c11 -I. -I/usr/include/simavr -o petsdsim test/petsdsim.c simlink.c \
+   -lsimavr -lelf -lpthread
+./petsdsim NODISKEMU.elf sd.img pet1 &
+xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
+```
+
+- Pins nach `arch-config.h` (HW_PETSDPLUS), Treiber 75160/75161 ueber TE
+  (PC3) nachgebildet; Eingaenge als "extern" markiert, sonst legt simavr
+  die Pull-ups der Firmware darueber (Karte fehlt, Schreibschutz).
+- Tasten (ADC7) im Ruhezustand etwa 550, nicht Vcc (sonst Diagnosemodus).
+- VICE meldet Fortschritt done+1, stempelt eine spaetere Aenderung des PET
+  aber noch mit done; petsdsim wertet daher nur bis Fortschritt - 2 als
+  endgueltig.
+- Gemessen am PET 4032: FAT direkt LOAD 2 925 B/s, SAVE 1 955 B/s; D82
+  LOAD 1 734 B/s, SAVE 814 B/s; D64 LOAD 1 585 B/s.
+
 Mitschreiber (Diagnose): `buslog [-i] [-o datei] bus` haengt passiv am Bus
 und schreibt jeden Wechsel mit emulierter Zeit auf; am Ende Anzahl Wechsel
 und kuerzeste Phase je Leitung. Am IEC-Bus mit `x64sc ... -iecsimlinkdevice`.

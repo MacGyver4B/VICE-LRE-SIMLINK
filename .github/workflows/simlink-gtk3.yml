@@ -74,6 +74,7 @@ jobs:
           mkdir -p ../../../simlink-tools
           gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/sltest.exe test/sltest.c simlink.c -static -lpthread
           gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/ieeedev.exe test/ieeedev.c simlink.c -static -lpthread
+          gcc -O2 -std=c11 -Wall -I. -o ../../../simlink-tools/iechost.exe test/iechost.c simlink.c -static -lpthread
           cp README.md ../../../simlink-tools/
 
       - name: Upload zip

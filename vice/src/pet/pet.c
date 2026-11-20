@@ -32,6 +32,7 @@
 #include <math.h>   /* modf */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "attach.h"
 #include "autostart.h"
@@ -831,10 +832,55 @@ void machine_specific_shutdown(void)
 
 /* ------------------------------------------------------------------------- */
 
+/* Test aid: VICE_MATRIXKEYS="start:r,c;r,c;..." presses keys directly in the
+   keyboard matrix (works with any CPU, e.g. the SuperPET 6809 firmware).
+   Each key is held 4 frames, then released for 4 frames. */
+static void matrixkeys_vsync(void)
+{
+    static const char *seq = NULL;
+    static int init = 0, frame = 0, start = 0, row = -1, col = -1;
+    const char *env;
+
+    if (!init) {
+        init = 1;
+        env = getenv("VICE_MATRIXKEYS");
+        if (env != NULL) {
+            start = atoi(env);
+            seq = strchr(env, ':');
+            if (seq != NULL) {
+                seq++;
+            }
+        }
+    }
+    if (seq == NULL || *seq == 0) {
+        return;
+    }
+    frame++;
+    if (frame < start) {
+        return;
+    }
+    switch ((frame - start) % 8) {
+        case 0:
+            if (sscanf(seq, "%d,%d", &row, &col) == 2) {
+                keyboard_set_keyarr(row, col, 1);
+            }
+            break;
+        case 4:
+            if (row >= 0) {
+                keyboard_set_keyarr(row, col, 0);
+            }
+            seq = strchr(seq, ';');
+            seq = seq ? seq + 1 : "";
+            row = col = -1;
+            break;
+    }
+}
+
 /* This hook is called at the end of every frame.  */
 static void machine_vsync_hook(void)
 {
     drive_vsync_hook();
+    matrixkeys_vsync();
 
     screenshot_record();
 }

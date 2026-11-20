@@ -286,3 +286,25 @@ zusaetzlich die Schnelllader (AR6 1541 LOAD+SAVE, AR6 und Burst auf der
   LOAD (17 und 5013 Bytes), Verzeichnis, SAVE und erneutes LOAD bytegleich,
   rund 400 Bytes/s wie beim echten Geraet; zwei Laeufe mit identischer
   Busspur.
+
+## Testhilfe: Tasten direkt in der Tastaturmatrix (xpet)
+
+`-keybuf` schreibt in den Tastaturpuffer des 6502-Kernals; die 6809-Firmware
+des SuperPET liest den nicht. Fuer automatische Tests drueckt xpet deshalb auf
+Wunsch Tasten direkt in der Matrix:
+
+    VICE_MATRIXKEYS="150:6,2;3,0;2,1;4,5;6,1;3,4" xpet -model SuperPET -cpu6809 ...
+
+Zahl vor dem Doppelpunkt: Startbild (Frames nach dem Start), danach Zeile,Spalte
+je Taste (aus den `.vkm`-Tastaturtabellen). Jede Taste wird 4 Frames gehalten
+und 4 Frames losgelassen. Das Beispiel tippt `basic` und Return auf der
+Business-Tastatur (Waterloo-Menue). Ohne die Variable aendert sich nichts.
+
+- SuperPET (6809, Waterloo-ROMs von VICE) mit `petsd2` (picoem, NODISKEMU 1.3.0
+  mit Mehrfachlaufwerken) und `sp9000lang.d80` auf Laufwerk 8:1: Das Menue
+  oeffnet `1:BASIC,PRG` auf Kanal 0 und liest die Datei in Stuecken, jeweils
+  abwechselnd mit dem Status auf Kanal 15 (TALK 15, TALK 0, UNTALK); Laden bis
+  zum CLOSE ohne Fehler.
+- petSD+ (`petsdsim`, AVR-Firmware 1.3.0) am xpet 8032: `DLOAD"CALC RESULT",D0`
+  (26 KB) haengt bei LOADING; mit der Korrektur der NDAC/NRFD-Abfrage in
+  `ieee488_TalkLoop()` laufen mehrere Ladevorgaenge hintereinander durch.

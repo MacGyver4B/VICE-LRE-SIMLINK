@@ -4,6 +4,15 @@ Kopplung von Emulatoren auf Leitungsebene für IEEE-488 und den seriellen IEC-Bu
 
 Stand: Version 1, 2026-11-18. Linux/macOS (POSIX `shm_open`) und Windows (`CreateFileMapping`, MinGW).
 
+## Was dabei ist
+
+- **xpet / x64sc / xdrive**: VICE hängt als Teilnehmer am IEEE-488- bzw. IEC-Bus; `xdrive` betreibt VICE-Laufwerke ohne Rechner.
+- **relay**: Brücke zwischen IEEE-488 und IEC auf Protokollebene, ohne eigenes DOS. Damit laufen serielle Laufwerke am PET: 1541 und 1571 mit AR6-Schnelllader (Host-Seite nachgebaut), 1571 und 1581 mit Burst, AR6 auf der 1581 versuchsweise. In der Gegenrichtung (`-r`) hängt eine IEEE-Floppy wie die 8250 am C64.
+- **petsdsim**: die unveränderte petSD+-Firmware (NODISKEMU, ATmega1284P) in simavr als Referenz am IEEE-Bus. Damit ließ sich unter anderem der Hänger beim Laden von Calc Result in NODISKEMU 1.3.0 nachstellen und die Korrektur prüfen.
+- **Testwerkzeuge**: `iechost`, `ieeedev`, `buslog` (passiver Mitschreiber), `sltest`, Gesamttest `check.sh`.
+
+Ein Port von NODISKEMU auf den RP2350 (Pico 2, über den Emulator picoem am Bus) ist in Arbeit und noch nicht öffentlich. Die ersten Tests sind vielversprechend, die Benchmarks gehen bis ans Limit des PET.
+
 ## Prinzip
 
 - Ein Shared-Memory-Block pro Bus, bis zu 8 Teilnehmer. Jeder schreibt nur seinen eigenen Bereich.
@@ -39,7 +48,6 @@ simlink_pulse(sl, slot, t_ps, SL_PULSE_PSTB);/* Impuls */
 simlink_progress(sl, slot, t_ps);            /* Fortschritt, wartet nicht */
 uint8_t lines = simlink_read(sl, slot, t_ps, &data); /* wartet bis alle t erreicht haben */
 unsigned n = simlink_pulses(sl, slot, SL_PULSE_PSTB);
-```
 
 uint64_t t0 = simlink_start_time(sl, slot);  /* Zeitbasis fuer Spaeteinsteiger */
 int n = simlink_others(sl, slot);              /* andere aktive Teilnehmer */
@@ -239,6 +247,11 @@ cc -O2 -std=c11 -I. -I/usr/include/simavr -o petsdsim test/petsdsim.c simlink.c 
 ./petsdsim NODISKEMU.elf sd.img pet1 &
 xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
 ```
+
+Automatischer Lauf mit Eingabe und Bildschirmfoto am Ende:
+`VICE=... test/run-avr.sh name NODISKEMU.elf zyklen 'keybuf' sd.img`
+(Modell per `MODEL=`, Standard 8032; weitere xpet-Optionen per `XARGS=`,
+petsdsim-Optionen per `PSARGS=`).
 
 - Pins nach `arch-config.h` (HW_PETSDPLUS), Treiber 75160/75161 ueber TE
   (PC3) nachgebildet; Eingaenge als "extern" markiert, sonst legt simavr

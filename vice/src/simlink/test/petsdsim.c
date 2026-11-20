@@ -57,6 +57,7 @@
 static volatile sig_atomic_t stop = 0;
 static int verbose = 0;
 static avr_t *avr;
+static unsigned min_sp = 0xffff;   /* tiefster Stapelzeiger */
 static simlink_t *sl;
 static int slot;
 static uint64_t off;            /* Startzeit am Bus */
@@ -479,14 +480,14 @@ usage:
         int err = 0, st;
         uint64_t m = simlink_peers_progress(sl, slot, &err), upto, tc, target;
         if (err || simlink_others(sl, slot) == 0) {
-            fprintf(stderr, "petsdsim: Gegenseite beendet\n");
+            fprintf(stderr, "petsdsim: Gegenseite beendet, tiefster SP 0x%04x\n", min_sp);
             break;
         }
         if (m == UINT64_MAX || m - 2 + look <= done) {
             /* Vorausschau aufgebraucht: auf die anderen warten */
             m = m == UINT64_MAX ? m : simlink_wait_peers(sl, slot, done + 1 - look);
             if (simlink_others(sl, slot) == 0) {
-                fprintf(stderr, "petsdsim: Gegenseite beendet\n");
+                fprintf(stderr, "petsdsim: Gegenseite beendet, tiefster SP 0x%04x\n", min_sp);
                 break;
             }
             if (m == UINT64_MAX) {
@@ -535,6 +536,10 @@ usage:
                 pend_n--;
             }
             st = avr_run(avr);
+            {
+                unsigned sp = avr->data[0x5d] | (avr->data[0x5e] << 8);
+                if (sp < min_sp) min_sp = sp;
+            }
             if (st == cpu_Done || st == cpu_Crashed) {
                 fprintf(stderr, "petsdsim: AVR angehalten (%d) bei PC %04x\n", st, avr->pc);
                 stop = 1;

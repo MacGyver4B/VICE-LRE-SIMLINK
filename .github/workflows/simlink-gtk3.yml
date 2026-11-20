@@ -1,7 +1,6 @@
 name: simlink - Windows GTK3 build
 on:
-  push:
-    branches: [ simlink ]
+  # nur von Hand starten (Actions -> Run workflow)
   workflow_dispatch:
 
 jobs:

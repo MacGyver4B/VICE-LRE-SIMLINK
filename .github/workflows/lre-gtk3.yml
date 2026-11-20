@@ -1,7 +1,6 @@
 name: PET 2001 LRE - Windows GTK3 build
+# nur von Hand starten
 on:
-  push:
-    branches: [ lre ]
   workflow_dispatch:
 
 jobs:

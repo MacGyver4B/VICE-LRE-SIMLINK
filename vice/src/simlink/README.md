@@ -256,6 +256,12 @@ petsdsim-Optionen per `PSARGS=`).
 - Pins nach `arch-config.h` (HW_PETSDPLUS), Treiber 75160/75161 ueber TE
   (PC3) nachgebildet; Eingaenge als "extern" markiert, sonst legt simavr
   die Pull-ups der Firmware darueber (Karte fehlt, Schreibschutz).
+- Laeuft mit simavr 1.6 (Debian/Ubuntu-Paket) und mit neueren Versionen
+  (1.7 und spaeter, git). Diese schreiben beim Ausgeben den PORT-Wert ins
+  PIN-Register; nach dem Umschalten auf Eingang bliebe dort der alte
+  Ausgangspegel stehen. petsdsim traegt die extern getriebenen Eingaenge
+  daher beim Lesen von PINx selbst ein (`pin_read`), simavr muss nicht
+  gepatcht werden.
 - Tasten (ADC7) im Ruhezustand etwa 550, nicht Vcc (sonst Diagnosemodus).
 - VICE meldet Fortschritt done+1, stempelt eine spaetere Aenderung des PET
   aber noch mit done; petsdsim wertet daher nur bis Fortschritt - 2 als

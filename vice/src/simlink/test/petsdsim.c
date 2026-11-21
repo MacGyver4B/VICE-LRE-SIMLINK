@@ -294,6 +294,24 @@ static void pin(char port, int bit, int v)
     avr_raise_irq(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ(port), bit), v ? 1 : 0);
 }
 
+/* Neuere simavr-Versionen (ab 1.7) schreiben beim Ausgeben den PORT-Wert
+   ins PIN-Register. Schaltet die Firmware den Pin danach auf Eingang,
+   bleibt dort der alte Ausgangspegel stehen: der externe Pegel wird nicht
+   neu eingetragen, weil sich der Wert der IRQ-Leitung nicht aendert
+   (gefilterter IRQ). Beim Lesen von PINx die extern getriebenen Eingaenge
+   daher selbst eintragen. simavr ruft diesen Hook bei jedem Lesen auf und
+   liefert danach den Inhalt von PINx; simavr 1.6 braucht das nicht und
+   ignoriert die Aenderung fuer den laufenden Lesezugriff. */
+static void pin_read(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+    int i = (int)(intptr_t)param;
+    static const uint8_t pin_addr[4] = { A_PINA, 0, A_PINC, A_PIND };
+    static const uint8_t ddr_addr[4] = { A_DDRA, 0, A_DDRC, A_DDRD };
+    uint8_t m = ext_mask[i] & (uint8_t)~avr->data[ddr_addr[i]];
+    (void)irq;
+    avr->data[pin_addr[i]] = (uint8_t)((value & ~m) | (ext_val[i] & m));
+}
+
 /* Bus der anderen (pull/data: gesetzt = low) auf die AVR-Eingaenge */
 static uint8_t ext_pull = 0xff, ext_data = 0xff;
 static int ext_valid = 0;
@@ -433,6 +451,9 @@ usage:
         avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_UART_GETIRQ('0'), UART_IRQ_OUTPUT), uart_out, NULL);
     }
     avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('B'), 4), ss_change, NULL);
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('A'), IOPORT_IRQ_REG_PIN), pin_read, (void *)(intptr_t)0);
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('C'), IOPORT_IRQ_REG_PIN), pin_read, (void *)(intptr_t)2);
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('D'), IOPORT_IRQ_REG_PIN), pin_read, (void *)(intptr_t)3);
     /* feste Eingaenge: Karte da, kein Schreibschutz, I2C-Leitungen hoch,
        Tasten: ADC7 etwa 550 (Ruhewert ohne Taste, readbuttons.inc) */
     pin('D', 5, 0);

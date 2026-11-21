@@ -13,8 +13,10 @@
 #           TMO (Zeitgrenze in s, Standard 2400)
 # Hinweis: NODISKEMU 1.3 zeigt 5 s lang den Startbildschirm, bevor es am Bus
 # antwortet - die Eingabe daher z. B. mit "fori=1to15000:next:" beginnen.
+# Das EEPROM ist bei jedem Lauf frisch; ohne PETSD.CFG meldet sich der
+# petSD+ daher unter seiner Vorgabeadresse 11 (CONFIG_DEFAULT_ADDR), nicht 8.
 set -e
-[ $# -eq 5 ] || { sed -n '2,17p' "$0"; exit 1; }
+[ $# -eq 5 ] || { sed -n '2,19p' "$0"; exit 1; }
 N=$1; ELF=$2; C=$3; K=$4; IMG=$5
 : "${VICE:?VICE=Pfad zum VICE-Baum (mit src/xpet und data) setzen}"
 PETSDSIM=${PETSDSIM:-./petsdsim}; TMO=${TMO:-2400}

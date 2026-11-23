@@ -18,6 +18,8 @@ Der Port von NODISKEMU auf den RP2350 (petSD2, Pico 2) liegt im Repo [NODISKEMU-
 - `main`: reiner Spiegel von VICE-Team `main` (keine eigenen Commits)
 - `simlink`: `main` + diese Kopplung
 - `lre`: `main` + PET 2001 LRE
+- `lre-simlink`: beides, entsteht nur durch `git merge simlink lre`
+  (keine eigenen Commits)
 
 Neue VICE-Staende: `main` vorspulen (GitHub "Sync fork" oder
 `git push origin upstream/main:main`), dann im Zweig `git merge main`,

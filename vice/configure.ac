@@ -3628,6 +3628,7 @@ AC_OUTPUT([Makefile
            src/gfxoutputdrv/Makefile
            src/hvsc/Makefile
            src/iecbus/Makefile
+           src/simlink/Makefile
            src/imagecontents/Makefile
            src/joyport/Makefile
            src/lib/Makefile

@@ -32,6 +32,7 @@
 #include <math.h>   /* modf */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "attach.h"
 #include "autostart.h"
@@ -653,6 +654,13 @@ void machine_setup_context(void)
     machine_printer_setup_context(&machine_context);
 }
 
+/* simlink: externer Teilnehmer zieht SRQ (am PET an PIA2 CB1) */
+static void pet_ieee_srq(int active, CLOCK clk)
+{
+    pia2_signal(PIA_SIG_CB1, active ? PIA_SIG_FALL : PIA_SIG_RISE, 0);
+}
+
+
 /* PET-specific initialization.  */
 int machine_specific_init(void)
 {
@@ -697,6 +705,7 @@ int machine_specific_init(void)
     via_init(machine_context.via);
     pia1_init();
     pia2_init();
+    parallel_ext_srq_hook = pet_ieee_srq;   /* simlink: SRQ -> PIA2 CB1 */
     acia1_init();
 
     /* Initialize the datasette emulation.  */
@@ -802,6 +811,7 @@ void machine_specific_reset(void)
     pethre_reset();
     petlre_reset();
     sampler_reset();
+    parallel_ext_reset();   /* simlink: IFC haengt am PET am Reset */
 }
 
 void machine_specific_shutdown(void)
@@ -836,10 +846,55 @@ void machine_specific_shutdown(void)
 
 /* ------------------------------------------------------------------------- */
 
+/* Test aid: VICE_MATRIXKEYS="start:r,c;r,c;..." presses keys directly in the
+   keyboard matrix (works with any CPU, e.g. the SuperPET 6809 firmware).
+   Each key is held 4 frames, then released for 4 frames. */
+static void matrixkeys_vsync(void)
+{
+    static const char *seq = NULL;
+    static int init = 0, frame = 0, start = 0, row = -1, col = -1;
+    const char *env;
+
+    if (!init) {
+        init = 1;
+        env = getenv("VICE_MATRIXKEYS");
+        if (env != NULL) {
+            start = atoi(env);
+            seq = strchr(env, ':');
+            if (seq != NULL) {
+                seq++;
+            }
+        }
+    }
+    if (seq == NULL || *seq == 0) {
+        return;
+    }
+    frame++;
+    if (frame < start) {
+        return;
+    }
+    switch ((frame - start) % 8) {
+        case 0:
+            if (sscanf(seq, "%d,%d", &row, &col) == 2) {
+                keyboard_set_keyarr(row, col, 1);
+            }
+            break;
+        case 4:
+            if (row >= 0) {
+                keyboard_set_keyarr(row, col, 0);
+            }
+            seq = strchr(seq, ';');
+            seq = seq ? seq + 1 : "";
+            row = col = -1;
+            break;
+    }
+}
+
 /* This hook is called at the end of every frame.  */
 static void machine_vsync_hook(void)
 {
     drive_vsync_hook();
+    matrixkeys_vsync();
 
     screenshot_record();
 }

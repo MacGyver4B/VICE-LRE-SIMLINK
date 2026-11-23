@@ -99,7 +99,7 @@ else
 fi
 
 
-EMULATORS="$X64FILE x64sc xscpu64 x64dtv x128 xcbm2 xcbm5x0 xpet xplus4 xvic vsid"
+EMULATORS="$X64FILE x64sc xdrive xscpu64 x64dtv x128 xcbm2 xcbm5x0 xpet xplus4 xvic vsid"
 CONSOLE_TOOLS="c1541 tools/cartconv/cartconv tools/petcat/petcat"
 EXECUTABLES="$EMULATORS $CONSOLE_TOOLS"
 

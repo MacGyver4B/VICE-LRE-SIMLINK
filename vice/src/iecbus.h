@@ -98,4 +98,45 @@ int iecbus_device_write(unsigned int unit, uint8_t data);
 
 extern void (*iecbus_update_ports)(void);
 
+/* simlink: externer Rechner am IEC-Bus (iecbus/iecbus-simlink.c) */
+extern int iecbus_ext_active;
+void iecbus_ext_drive_changed(unsigned int dnr);
+/* Fast Serial (Byte ueber das Schieberegister) eines Laufwerks an den
+   externen Rechner; Rechner -> Laufwerke ueber den Zeiger (gesetzt von
+   c64fastiec_init/c128fastiec_init) */
+void iecbus_ext_fast_drive_write(uint8_t data, unsigned int dnr);
+extern void (*iecbus_ext_fast_host_write)(uint8_t data);
+
+/* Leitungen des externen Rechners (1 = Leitung gezogen, wie simlink) */
+#define IECBUS_EXT_ATN   0x01
+#define IECBUS_EXT_CLK   0x02
+#define IECBUS_EXT_DATA  0x04
+
+/* von der Maschine bereitgestellt (z. B. c64iec.c) */
+typedef struct iecbus_ext_machine_s {
+    /* eigenen Rechner vom IEC-Bus trennen (1) bzw. wieder verbinden (0) */
+    void (*disconnect)(int on);
+    /* Leitungen des externen Rechners ueber den normalen Schreibweg
+       (iecbus_callback_write) auf den Bus legen */
+    void (*host_write)(uint8_t pull, CLOCK clk);
+} iecbus_ext_machine_t;
+
+extern const iecbus_ext_machine_t *iecbus_ext_machine;
+void iecbus_ext_reset(void);
+
+/* simlink: externes Geraet am IEC-Bus, der eigene Rechner bleibt am Bus
+   (Ressource IECSimlinkDevice). Leitungen des Geraets im drv_bus-Format:
+   0x40 CLK, 0x80 DATA, 1 = frei. Die Maschine rechnet sie in
+   iec_update_ports() mit ein. */
+extern int iecbus_ext_device;
+extern uint8_t iecbus_ext_dev_bus;
+/* vom Schreibweg des Rechners nach jeder Aenderung aufgerufen */
+void iecbus_ext_host_changed(CLOCK clk);
+/* Lese-/Schreibweg neu waehlen (mit externem Geraet immer der allgemeine) */
+void iecbus_ext_update_callbacks(void);
+int iecbus_simlink_is_xdrive(void);
+int iecbus_simlink_resources_init(void);
+void iecbus_simlink_resources_shutdown(void);
+int iecbus_simlink_cmdline_options_init(void);
+
 #endif

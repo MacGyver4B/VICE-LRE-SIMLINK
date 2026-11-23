@@ -263,7 +263,9 @@ inline static uint32_t drive_trap_handler(diskunit_context_t *drv)
 {
     if (R65C02_REGS_GET_PC(&(drv->cpu->cpu_R65C02_regs)) == (uint16_t)drv->trap) {
         R65C02_REGS_SET_PC(&(drv->cpu->cpu_R65C02_regs), drv->trapcont);
-        if (drv->idling_method == DRIVE_IDLE_TRAP_IDLE) {
+        /* simlink: kein Vorspulen, sonst haengt der Ablauf davon ab, in welchen
+           Schritten das Laufwerk nachgezogen wird */
+        if (drv->idling_method == DRIVE_IDLE_TRAP_IDLE && !drive_ext_exact) {
             CLOCK next_clk;
 
             next_clk = alarm_context_next_pending_clk(drv->cpu->alarm_context);

@@ -32,6 +32,7 @@
 #include "via.h"
 #include "drive.h"
 #include "drivetypes.h"
+#include "iecbus.h"
 #include "iecdrive.h"
 #include "maincpu.h"
 #include "types.h"
@@ -65,6 +66,7 @@ void c64fastiec_init(void)
     for (dnr = 0; dnr < NUM_DISK_UNITS; dnr++) {
         fast_drive_direction[dnr] = 1;
     }
+    iecbus_ext_fast_host_write = c64fastiec_fast_cpu_write;
 }
 
 void c64fastiec_fast_cpu_write(uint8_t data)
@@ -100,6 +102,7 @@ void c64fastiec_fast_cpu_write(uint8_t data)
 void iec_fast_drive_write(uint8_t data, unsigned int dnr)
 {
     if (fast_drive_direction[dnr]) {
+        iecbus_ext_fast_drive_write(data, dnr);
         switch (burst_mod) {
             case BURST_MOD_CIA1:
                 ciacore_set_sdr(machine_context.cia1, data);

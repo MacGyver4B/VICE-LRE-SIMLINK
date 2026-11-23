@@ -38,6 +38,7 @@ else
 SUBDIRS = \
 	@RESID_DIR@ \
 	@RESID_DTV_DIR@ \
+	simlink \
 	joyport \
 	drive \
 	vdrive \
@@ -82,6 +83,7 @@ SUBDIRS = \
 endif
 
 DIST_SUBDIRS = \
+	simlink \
 	joyport \
 	drive \
 	vdrive \
@@ -589,6 +591,7 @@ mididrv_lib = $(top_builddir)/src/arch/shared/mididrv/libmididrv.a
 monitor_lib = $(top_builddir)/src/monitor/libmonitor.a
 p64_lib = $(top_builddir)/src/lib/p64/libp64.a
 parallel_lib = $(top_builddir)/src/parallel/libparallel.a
+simlink_lib = $(top_builddir)/src/simlink/libsimlink.a
 pet_lib = $(top_builddir)/src/pet/libpet.a
 petstubs_lib = $(top_builddir)/src/pet/libpetstubs.a
 plus4_lib = $(top_builddir)/src/plus4/libplus4.a
@@ -640,7 +643,7 @@ resid_dtv_libs = @RESID_DTV_LIBS@
 # external libraries required for all emulators
 emu_extlibs = @UI_LIBS@ @SDL_EXTRA_LIBS@ @SOUND_LIBS@ @JOY_LIBS@ @GFXOUTPUT_LIBS@ @ZLIB_LIBS@ @DYNLIB_LIBS@ @ARCH_LIBS@ $(archdep_lib) $(linenoise_ng_lib)
 
-driver_libs = $(joyport_lib) $(samplerdrv_lib) $(sounddrv_lib) $(mididrv_lib) $(socketdrv_lib) $(hwsiddrv_lib) $(gfxoutputdrv_lib) $(printerdrv_lib) $(diskimage_lib) $(fsdevice_lib) $(tape_lib) $(fileio_lib) $(serial_lib) $(core_lib)
+driver_libs = $(simlink_lib) $(joyport_lib) $(samplerdrv_lib) $(sounddrv_lib) $(mididrv_lib) $(socketdrv_lib) $(hwsiddrv_lib) $(gfxoutputdrv_lib) $(printerdrv_lib) $(diskimage_lib) $(fsdevice_lib) $(tape_lib) $(fileio_lib) $(serial_lib) $(core_lib)
 
 if HAVE_USBSID
 driver_libs += $(usbsiddrv_lib)
@@ -659,7 +662,7 @@ endif
 
 # workaround for extra exe creation
 
-bin_PROGRAMS = vsid $(x64_bin) x64sc x64dtv xscpu64 x128 xvic xpet xplus4 \
+bin_PROGRAMS = vsid $(x64_bin) x64sc xdrive x64dtv xscpu64 x128 xvic xpet xplus4 \
 	       xcbm2 xcbm5x0 c1541
 
 EXTRA_PROGRAMS =
@@ -825,6 +828,13 @@ else
 x64sc_LDFLAGS = @x64_LDFLAGS@ -Wl,-Map=x64sc.map
 endif
 endif
+
+# xdrive: dieselben Bausteine wie x64sc; als "xdrive" gestartet ist der C64
+# vom IEC-Bus getrennt und ein externer Rechner (simlink) bedient die
+# Laufwerke (siehe src/iecbus/iecbus-simlink.c)
+xdrive_SOURCES = $(base_sources) $(midi_sources)
+xdrive_LDADD = $(x64sc_libs) $(emu_extlibs) @TFE_LIBS@ @NETPLAY_LIBS@ $(X64SC_RES)
+xdrive_DEPENDENCIES = $(x64sc_libs)
 
 .PHONY: x64sc-all x64sc-program
 x64sc-all:

@@ -7,7 +7,8 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/printerdrv \
 	-I$(top_srcdir)/src/lib/p64 \
 	-I$(top_srcdir)/src/core \
-	-I$(top_srcdir)/src/core/rtc
+	-I$(top_srcdir)/src/core/rtc \
+	-I$(top_srcdir)/src/simlink
 
 AM_CFLAGS = @VICE_CFLAGS@
 
@@ -19,5 +20,6 @@ AM_LDFLAGS = @VICE_LDFLAGS@
 noinst_LIBRARIES = libiecbus.a
 
 libiecbus_a_SOURCES = \
+	iecbus-simlink.c \
 	iecbus.c
 

@@ -5,7 +5,8 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src \
 	-I$(top_srcdir)/src/drive \
 	-I$(top_srcdir)/src/lib/p64 \
-	-I$(top_srcdir)/src/core/rtc
+	-I$(top_srcdir)/src/core/rtc \
+	-I$(top_srcdir)/src/simlink
 
 AM_CFLAGS = @VICE_CFLAGS@
 
@@ -19,4 +20,5 @@ noinst_LIBRARIES = libparallel.a
 libparallel_a_SOURCES = \
 	parallel-trap.c \
 	parallel-trap.h \
+	parallel-simlink.c \
 	parallel.c

@@ -64,6 +64,17 @@ extern uint8_t parallel_bus;       /* data lines */
 #define PARALLEL_DRV1   0x08
 #define PARALLEL_DRV2   0x10
 #define PARALLEL_DRV3   0x20
+#define PARALLEL_EXT    0x40    /* externer Teilnehmer ueber simlink */
+
+/* simlink: externer Teilnehmer am IEEE-Bus (parallel-simlink.c) */
+void parallel_ext_presync(uint8_t who);         /* vor einer Leitungsaenderung (who: PARALLEL_*) */
+void parallel_ext_notify(uint8_t who);          /* Leitungen geaendert (who: PARALLEL_*) */
+void parallel_ext_reset(void);                  /* Reset des Rechners (IFC) */
+void parallel_ext_set_bus(uint8_t b);           /* Datenleitungen des externen Teilnehmers */
+uint8_t parallel_bus_vice(void);                /* Datenleitungen ohne externen Teilnehmer */
+extern void (*parallel_ext_srq_hook)(int active, CLOCK clk);
+int parallel_simlink_resources_init(void);
+int parallel_simlink_cmdline_options_init(void);
 
 /* methods to set handshake lines active for the devices */
 void parallel_set_eoi(uint8_t mask);

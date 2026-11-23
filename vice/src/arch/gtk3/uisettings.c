@@ -106,6 +106,7 @@
 #include "settings_hvsc.h"
 #include "settings_ide64.h"
 #include "settings_ieee488.h"
+#include "settings_ieeesimlink.h"
 #include "settings_ieeeflash64.h"
 #include "settings_io.h"
 #include "settings_isepic.h"
@@ -1800,6 +1801,9 @@ static ui_settings_tree_node_t peripheral_nodes_pet[] = {
     { "Printer",
       "printer",
       settings_printer_widget_create, NULL },
+    { "External IEEE-488 (simlink)",
+      "ieee-simlink",
+      settings_ieeesimlink_widget_create, NULL },
     /* No RS232 for standard PET, SuperPET has ACIA though */
 #if 0
 #ifdef HAVE_RS232DEV

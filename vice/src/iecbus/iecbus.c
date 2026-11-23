@@ -427,6 +427,16 @@ static void iecbus_cpu_write_conf3(uint8_t data, CLOCK clock)
     }
 
     iec_update_ports();
+    if (iecbus_ext_device) {
+        iecbus_ext_host_changed(clock);     /* simlink: Rechnerleitungen veroeffentlichen */
+    }
+}
+
+static void calculate_callback_index(void);
+
+void iecbus_ext_update_callbacks(void)
+{
+    calculate_callback_index();
 }
 
 static void calculate_callback_index(void)
@@ -441,6 +451,11 @@ static void calculate_callback_index(void)
                      | (iecbus_device[5] << 12)
                      | (iecbus_device[6] << 14)
                      | (iecbus_device[7] << 16);
+
+    /* externes Geraet (simlink): nur der allgemeine Weg rechnet es mit ein */
+    if (iecbus_ext_device) {
+        callback_index = 0xffffffffu;
+    }
 
     switch (callback_index) {
         case 0:

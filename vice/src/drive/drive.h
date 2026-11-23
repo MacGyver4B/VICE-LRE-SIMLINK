@@ -396,6 +396,20 @@ extern CLOCK diskunit_clk[NUM_DISK_UNITS];
 #include "drivetypes.h"
 extern struct diskunit_context_s *diskunit_context[NUM_DISK_UNITS];
 
+/* simlink: Abgleich mit externen Teilnehmern vor jedem Nachziehen der Laufwerke */
+void drive_ext_sync_add(void (*hook)(CLOCK clk_value));
+void drive_ext_sync_remove(void (*hook)(CLOCK clk_value));
+extern void (*drive_ext_iec_changed)(unsigned int dnr);
+extern int drive_ext_exact;
+typedef struct drive_sync_snap_s {
+    CLOCK last_clk;
+    CLOCK stop_clk;
+    CLOCK accum;
+    unsigned int sync_factor;
+} drive_sync_snap_t;
+void drive_sync_snapshot(struct diskunit_context_s *unit, drive_sync_snap_t *s);
+CLOCK drive_sync_main_clock(const drive_sync_snap_t *s, CLOCK dclk);
+
 extern int drive_rom_loaded;
 
 int drive_init(void);

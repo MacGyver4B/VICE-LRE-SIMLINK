@@ -504,9 +504,15 @@ usage:
             fprintf(stderr, "petsdsim: Gegenseite beendet, tiefster SP 0x%04x\n", min_sp);
             break;
         }
-        if (m == UINT64_MAX || m - 2 + look <= done) {
+        /* Weiter, wenn m - 2 + look ueber done liegt (ohne Unterlauf
+           gerechnet). Direkt nach dem Anmelden meldet VICE Fortschritt 0 oder
+           1; dann ist von dort noch nichts endgueltig (kein upto), die
+           Vorausschau gilt aber schon. Frueher lief m - 2 dabei ueber, und
+           last_ext stand danach dauerhaft auf dem Hoechstwert: petsdsim sah den
+           PET nur noch an den Fortschrittsgrenzen, Zwischenzustaende fehlten. */
+        if (m == UINT64_MAX || m + look <= done + 2) {
             /* Vorausschau aufgebraucht: auf die anderen warten */
-            m = m == UINT64_MAX ? m : simlink_wait_peers(sl, slot, done + 1 - look);
+            m = m == UINT64_MAX ? m : simlink_wait_peers(sl, slot, done + 2 - look);
             if (simlink_others(sl, slot) == 0) {
                 fprintf(stderr, "petsdsim: Gegenseite beendet, tiefster SP 0x%04x\n", min_sp);
                 break;
@@ -515,6 +521,10 @@ usage:
                 usleep(1000);       /* Gegenseite noch nicht aktiv */
                 continue;
             }
+        }
+        if (m < 2) {
+            target = m + look - 2;
+            goto run;
         }
         /* VICE meldet Fortschritt done+1, stempelt eine spaetere Aenderung
            des PET aber noch mit done (parallel-simlink.c, publish); daher
@@ -548,6 +558,7 @@ usage:
             last_ext = upto > last_ext ? upto : last_ext;
         }
         target = upto + look;
+    run:
         while (now_ps() < target && !stop) {
             while (pend_n && pend_t[0] <= now_ps()) {
                 apply_ext(pend_l[0], pend_d[0]);

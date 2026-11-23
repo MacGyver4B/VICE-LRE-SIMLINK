@@ -8,10 +8,10 @@ Stand: Version 1, 2026-11-18. Linux/macOS (POSIX `shm_open`) und Windows (`Creat
 
 - **xpet / x64sc / xdrive**: VICE hängt als Teilnehmer am IEEE-488- bzw. IEC-Bus; `xdrive` betreibt VICE-Laufwerke ohne Rechner.
 - **relay**: Brücke zwischen IEEE-488 und IEC auf Protokollebene, ohne eigenes DOS. Damit laufen serielle Laufwerke am PET: 1541 und 1571 mit AR6-Schnelllader (Host-Seite nachgebaut), 1571 und 1581 mit Burst, AR6 auf der 1581 versuchsweise. In der Gegenrichtung (`-r`) hängt eine IEEE-Floppy wie die 8250 am C64.
-- **petsdsim**: die unveränderte petSD+-Firmware (NODISKEMU, ATmega1284P) in simavr als Referenz am IEEE-Bus. Damit ließ sich unter anderem der Hänger beim Laden von Calc Result in NODISKEMU 1.3.0 nachstellen und die Korrektur prüfen.
+- **petsdsim**: die unveränderte petSD+-Firmware (NODISKEMU, ATmega1284P) in simavr als Referenz am IEEE-Bus. Damit ließ sich unter anderem der Hänger beim Laden von Calc Result in NODISKEMU 1.3.0 nachstellen und die Korrektur prüfen. petsdsim liegt inzwischen im Repo [NODISKEMU-pico](https://github.com/MacGyver4B/NODISKEMU-pico) unter `sim/petsdsim` (siehe unten).
 - **Testwerkzeuge**: `iechost`, `ieeedev`, `buslog` (passiver Mitschreiber), `sltest`, Gesamttest `check.sh`.
 
-Ein Port von NODISKEMU auf den RP2350 (Pico 2, über den Emulator picoem am Bus) ist in Arbeit und noch nicht öffentlich. Die ersten Tests sind vielversprechend, die Benchmarks gehen bis ans Limit des PET.
+Der Port von NODISKEMU auf den RP2350 (petSD2, Pico 2) liegt im Repo [NODISKEMU-pico](https://github.com/MacGyver4B/NODISKEMU-pico); dessen Ordner `sim/` simuliert petSD+ und petSD2 an diesem xpet, mit Bedienfeld im Browser und Startskript.
 
 ## Prinzip
 
@@ -232,42 +232,11 @@ aus Bank 2 des CRT-Abbilds; er steht nicht im Repo.
   TALK schnell.
 - `AR_DUMP=datei`: zuletzt geladene bzw. zu speichernde Datei ablegen.
 
-Referenz petSD+ (`test/petsdsim.c`): die unveraenderte NODISKEMU-Firmware
-(ATmega1284P, 8 MHz) in simavr am IEEE-Bus, SD-Karte als Image-Datei
-(MBR + FAT16, SDHC-Blockadressen). Eingaenge vom Bus wirken 2 us spaeter
-(`-l`), damit beide Seiten je Runde um diese Vorausschau vorankommen; das
-laeuft schneller als Echtzeit und aendert die gemessenen Zeiten nicht
-(0,25 us ergab dasselbe). Ab Werk Geraet 11 (Menuesystem), Adresse per
-`U0>`; das EEPROM wird nicht gespeichert.
-
-```
-make CONFIG=configs/config-petSD+          # im NODISKEMU-Baum
-cc -O2 -std=c11 -I. -I/usr/include/simavr -o petsdsim test/petsdsim.c simlink.c \
-   -lsimavr -lelf -lpthread
-./petsdsim NODISKEMU.elf sd.img pet1 &
-xpet -drive8type 0 +busdevice8 -ieeesimlink pet1
-```
-
-Automatischer Lauf mit Eingabe und Bildschirmfoto am Ende:
-`VICE=... test/run-avr.sh name NODISKEMU.elf zyklen 'keybuf' sd.img`
-(Modell per `MODEL=`, Standard 8032; weitere xpet-Optionen per `XARGS=`,
-petsdsim-Optionen per `PSARGS=`).
-
-- Pins nach `arch-config.h` (HW_PETSDPLUS), Treiber 75160/75161 ueber TE
-  (PC3) nachgebildet; Eingaenge als "extern" markiert, sonst legt simavr
-  die Pull-ups der Firmware darueber (Karte fehlt, Schreibschutz).
-- Laeuft mit simavr 1.6 (Debian/Ubuntu-Paket) und mit neueren Versionen
-  (1.7 und spaeter, git). Diese schreiben beim Ausgeben den PORT-Wert ins
-  PIN-Register; nach dem Umschalten auf Eingang bliebe dort der alte
-  Ausgangspegel stehen. petsdsim traegt die extern getriebenen Eingaenge
-  daher beim Lesen von PINx selbst ein (`pin_read`), simavr muss nicht
-  gepatcht werden.
-- Tasten (ADC7) im Ruhezustand etwa 550, nicht Vcc (sonst Diagnosemodus).
-- VICE meldet Fortschritt done+1, stempelt eine spaetere Aenderung des PET
-  aber noch mit done; petsdsim wertet daher nur bis Fortschritt - 2 als
-  endgueltig.
-- Gemessen am PET 4032: FAT direkt LOAD 2 925 B/s, SAVE 1 955 B/s; D82
-  LOAD 1 734 B/s, SAVE 814 B/s; D64 LOAD 1 585 B/s.
+Referenz petSD+: petsdsim (die unveraenderte NODISKEMU-Firmware in simavr am
+IEEE-Bus) ist nach NODISKEMU-pico umgezogen, `sim/petsdsim`, zusammen mit
+dem Startskript `sim/petsd-sim.py`, dem Bedienfeld (LCD, Tasten, Uhr,
+EEPROM) und VCD-Mitschnitten fuer GTKWave; Anleitung in `sim/README.md`
+dort. Die fruehere Kopie in `test/` ist entfallen.
 
 Mitschreiber (Diagnose): `buslog [-i] [-o datei] bus` haengt passiv am Bus
 und schreibt jeden Wechsel mit emulierter Zeit auf; am Ende Anzahl Wechsel

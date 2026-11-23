@@ -23,7 +23,6 @@ EXTRA_DIST = \
 	test/iechost.c \
 	test/relay.c \
 	test/buslog.c \
-	test/petsdsim.c \
 	test/check.sh \
 	test/sltest.c \
 	test/run.sh

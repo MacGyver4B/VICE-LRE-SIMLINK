@@ -168,6 +168,7 @@ noinst_HEADERS = \
 	c128ui.h \
 	c64ui.h \
 	cartio.h \
+	cartridge_banks.h \
 	cartridge.h \
 	catweaselmkiii.h \
 	cbm2ui.h \
@@ -228,6 +229,7 @@ noinst_HEADERS = \
 	mainlock.h \
 	mainviccpu.c \
 	mem.h \
+	mem_bank_dynamic.h \
 	midi.h \
 	mididrv.h \
 	monitor.h \
@@ -298,6 +300,7 @@ base_sources = \
 	attach.c \
 	autostart.c \
 	autostart-prg.c \
+	cartridge_banks.c \
 	cbmdos.c \
 	cbmimage.c \
 	charset.c \
@@ -325,6 +328,7 @@ base_sources = \
 	machine.c \
 	main.c \
 	mainlock.c \
+	mem_bank_dynamic.c \
 	m3u.c \
 	network.c \
 	opencbmlib.c \

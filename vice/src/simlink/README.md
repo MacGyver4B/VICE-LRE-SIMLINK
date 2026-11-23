@@ -13,6 +13,16 @@ Stand: Version 1, 2026-11-18. Linux/macOS (POSIX `shm_open`) und Windows (`Creat
 
 Der Port von NODISKEMU auf den RP2350 (petSD2, Pico 2) liegt im Repo [NODISKEMU-pico](https://github.com/MacGyver4B/NODISKEMU-pico); dessen Ordner `sim/` simuliert petSD+ und petSD2 an diesem xpet, mit Bedienfeld im Browser und Startskript.
 
+## Zweige des Forks und VICE-Updates
+
+- `main`: reiner Spiegel von VICE-Team `main` (keine eigenen Commits)
+- `simlink`: `main` + diese Kopplung
+- `lre`: `main` + PET 2001 LRE
+
+Neue VICE-Staende: `main` vorspulen (GitHub "Sync fork" oder
+`git push origin upstream/main:main`), dann im Zweig `git merge main`,
+bauen und testen. Windows-Builds starten nur von Hand.
+
 ## Prinzip
 
 - Ein Shared-Memory-Block pro Bus, bis zu 8 Teilnehmer. Jeder schreibt nur seinen eigenen Bereich.

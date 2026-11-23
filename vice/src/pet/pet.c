@@ -78,6 +78,7 @@
 #include "petreu.h"
 #include "petdww.h"
 #include "pethre.h"
+#include "petlre.h"
 #include "pets.h"
 #include "petsound.h"
 #include "petui.h"
@@ -332,6 +333,10 @@ int machine_resources_init(void)
         init_resource_fail("petdww");
         return -1;
     }
+    if (petlre_resources_init() < 0) {
+        init_resource_fail("petlre");
+        return -1;
+    }
     if (pethre_resources_init() < 0) {
         init_resource_fail("pethre");
         return -1;
@@ -439,6 +444,7 @@ void machine_resources_shutdown(void)
 {
     petdww_resources_shutdown();
     pethre_resources_shutdown();
+    petlre_resources_shutdown();
     pet_resources_shutdown();
     petreu_resources_shutdown();
     rs232drv_resources_shutdown();
@@ -483,6 +489,10 @@ int machine_cmdline_options_init(void)
     }
     if (petdww_cmdline_options_init() < 0) {
         init_cmdline_options_fail("petdww");
+        return -1;
+    }
+    if (petlre_cmdline_options_init() < 0) {
+        init_cmdline_options_fail("petlre");
         return -1;
     }
     if (pethre_cmdline_options_init() < 0) {
@@ -749,6 +759,7 @@ int machine_specific_init(void)
 
     /* Initialize the PET Hi-Res Emulator graphics card. */
     pethre_init();
+    petlre_init();
 
     petiec_init();
 
@@ -766,6 +777,7 @@ void machine_specific_powerup(void)
 {
     petdww_powerup();
     pethre_powerup();
+    petlre_powerup();
     userport_powerup();
     tapeport_powerup();
     joyport_powerup();
@@ -788,6 +800,7 @@ void machine_specific_reset(void)
     petreu_reset();
     petdww_reset();
     pethre_reset();
+    petlre_reset();
     sampler_reset();
 }
 
@@ -805,6 +818,7 @@ void machine_specific_shutdown(void)
     /* close the video chip(s) */
     petdww_shutdown();
     pethre_shutdown();
+    petlre_shutdown();
     crtc_shutdown();
 
     petreu_shutdown();

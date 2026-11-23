@@ -57,6 +57,8 @@ libpet_a_SOURCES = \
 	petdww.h \
 	pethre.c \
 	pethre.h \
+	petlre.c \
+	petlre.h \
 	petiec.c \
 	petiec.h \
 	petio.c \

@@ -130,6 +130,7 @@
 #include "settings_petcolourgraphics.h"
 #include "settings_petdww.h"
 #include "settings_pethre.h"
+#include "settings_petlre.h"
 #include "settings_petreu.h"
 #include "settings_plus4digiblaster.h"
 #include "settings_printer.h"
@@ -854,6 +855,9 @@ static ui_settings_tree_node_t pet_io_extensions[] = {
     { "PET HRE hi-res graphics",
       "pet-hre",
       settings_pethre_widget_create, NULL },
+    { "PET 2001 LRE",
+      "pet-lre",
+      settings_petlre_widget_create, NULL },
     UI_SETTINGS_TERMINATOR
 };
 /* }}} */

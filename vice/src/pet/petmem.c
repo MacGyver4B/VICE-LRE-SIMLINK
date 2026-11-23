@@ -50,6 +50,7 @@
 #include "petcolour.h"
 #include "petdww.h"
 #include "pethre.h"
+#include "petlre.h"
 #include "petmem.h"
 #include "petmodel.h"
 #include "petpia.h"
@@ -1286,6 +1287,17 @@ static void set_std_9tof(void)
 #endif
     }
 
+    /* Possibly set up the PET 2001 LRE: card ROM at $A000 - $FFFF except
+       $E8xx, RAM board at $8000 - $8FFF ($9FFF in graphics mode). */
+    if (petlre_enabled) {
+#if USE_MMU_TRANSLATE
+        petlre_override_9tof(_mem_read_tab, _mem_write_tab,
+                             _mem_read_base_tab, mem_read_limit_tab);
+#else
+        petlre_override_9tof(_mem_read_tab, _mem_write_tab);
+#endif
+    }
+
 #if USE_MMU_TRANSLATE
     _mem_read_base_tab_ptr = _mem_read_base_tab;
     mem_read_limit_tab_ptr = mem_read_limit_tab;
@@ -1641,6 +1653,17 @@ void petmem_set_vidmem(void)
 #endif
         }
     }
+
+    /* Possibly set up the PET 2001 LRE: card ROM at $A000 - $FFFF except
+       $E8xx, RAM board at $8000 - $8FFF ($9FFF in graphics mode). */
+    if (petlre_enabled) {
+#if USE_MMU_TRANSLATE
+        petlre_override_9tof(_mem_read_tab, _mem_write_tab,
+                             _mem_read_base_tab, mem_read_limit_tab);
+#else
+        petlre_override_9tof(_mem_read_tab, _mem_write_tab);
+#endif
+    }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1916,6 +1939,11 @@ void mem_set_basic_text(uint16_t start, uint16_t end)
 */
 uint8_t mem_read_screen(uint16_t addr)
 {
+    uint8_t v;
+
+    if (petlre_peek(addr, &v)) {
+        return v;
+    }
     return ram_read(addr);
 }
 
@@ -2163,6 +2191,10 @@ uint8_t mem_bank_peek(int bank, uint16_t addr, void *context)
             if (addr >= 0xE800 && addr < 0xE900) {
                 return peek_bank_io(addr);
             }
+            /* PET 2001 LRE: card ROM and RAM board hide the mainboard */
+            if (bank != bank_io && petlre_peek(addr, &v)) {
+                return v;
+            }
             if (petres.model.superpet && (addr & 0xFF00) == 0xEF00) {
                 return read_super_io(addr);
             }
@@ -2313,6 +2345,7 @@ mem_ioreg_list_t *mem_ioreg_list_get(void *context)
     if (pethre_enabled) {
         mon_ioreg_add_list(&mem_ioreg_list, "HRE", 0xe888, 0xe888, mem_dump_io, NULL, IO_MIRROR_NONE);
     }
+    petlre_ioreg_add_list(&mem_ioreg_list);
     if (petres.map) {
         mon_ioreg_add_list(&mem_ioreg_list, "8096", 0xfff0, 0xfff0, mem_dump_io, NULL, IO_MIRROR_NONE);
     }

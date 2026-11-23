@@ -55,6 +55,7 @@
 #include "vice-event.h"
 
 #include "pet-snapshot.h"
+#include "petlre.h"
 
 
 #define SNAP_MAJOR 1
@@ -81,6 +82,7 @@ int pet_snapshot_write(const char *name, int save_roms, int save_disks,
         || pia1_snapshot_write_module(s) < 0
         || pia2_snapshot_write_module(s) < 0
         || petdww_snapshot_write_module(s) < 0
+        || petlre_snapshot_write_module(s) < 0
         || viacore_snapshot_write_module(machine_context.via, s) < 0
         || drive_snapshot_write_module(s, save_disks, save_roms) < 0
         || fsdrive_snapshot_write_module(s) < 0
@@ -130,6 +132,7 @@ int pet_snapshot_read(const char *name, int event_mode)
         || pia1_snapshot_read_module(s) < 0
         || pia2_snapshot_read_module(s) < 0
         || petdww_snapshot_read_module(s) < 0
+        || petlre_snapshot_read_module(s) < 0
         || viacore_snapshot_read_module(machine_context.via, s) < 0
         || drive_snapshot_read_module(s) < 0
         || fsdrive_snapshot_read_module(s) < 0

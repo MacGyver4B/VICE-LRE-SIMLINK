@@ -163,6 +163,7 @@ libwidgets_a_SOURCES = \
 	settings_petcolourgraphics.c \
 	settings_petdww.c \
 	settings_pethre.c \
+	settings_petlre.c \
 	settings_petreu.c \
 	settings_plus4digiblaster.c \
 	settings_printer.c \
@@ -341,6 +342,7 @@ EXTRA_DIST = \
 	settings_petcolourgraphics.h \
 	settings_petdww.h \
 	settings_pethre.h \
+	settings_petlre.h \
 	settings_petreu.h \
 	settings_plus4digiblaster.h \
 	settings_printer.h \

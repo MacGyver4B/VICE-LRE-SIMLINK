@@ -81,7 +81,7 @@ jobs:
       - name: Upload zip
         uses: actions/upload-artifact@v6
         with:
-          name: vice-gtk3-win64-simlink
+          name: vice-gtk3-win64-${{ github.ref_name }}
           path: |
             vice/*.zip
             simlink-tools/

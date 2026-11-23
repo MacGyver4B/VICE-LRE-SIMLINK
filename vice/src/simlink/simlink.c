@@ -30,6 +30,20 @@
 
 #define SIMLINK_MAGIC 0x4B4E4C53u /* "SLNK" */
 
+/* Warnungen bei Zustaenden, die nach dem Protokoll nicht vorkommen duerfen.
+   Gezaehlt je Art; ausgegeben werden die ersten zehn, danach jede tausendste. */
+enum { W_RING_READ, W_RING_SCAN, W_COLLAPSE, W_LATE, W_NUM };
+static unsigned long warn_n[W_NUM];
+
+static void warn(int kind, const char *what, uint64_t t1, uint64_t t2)
+{
+    unsigned long n = ++warn_n[kind];
+    if (n <= 10 || n % 1000 == 0) {
+        fprintf(stderr, "simlink: WARNUNG (%lu) %s bei %.6f ms / %.6f ms\n",
+                n, what, t1 / 1e9, t2 / 1e9);
+    }
+}
+
 /* Ein Ringeintrag: ab time_ps gilt state/pulses.
    state  = pull | data << 8
    pulses = Zaehler PSTB | PACK << 8 | SRQ << 16 (je 8 Bit, laufen ueber) */
@@ -468,10 +482,16 @@ static void append(simlink_t *sl, int slot, uint64_t t)
        Eintrag mit kleinerer Zeit wuerde sie brechen (die anderen koennten den
        Stand dort schon gelesen haben) - also auf den Fortschritt anheben.
        Ebenso nie vor den letzten eigenen Eintrag. */
+    if (t + 1000 < prog) {
+        warn(W_LATE, "Aenderung vor dem eigenen Fortschritt, verschoben", t, prog);
+    }
     if (t < prog) {
         t = prog;
     }
     if (t < last->time_ps) {
+        if (t + 1000 < last->time_ps) {
+            warn(W_LATE, "Aenderung vor dem letzten eigenen Eintrag, verschoben", t, last->time_ps);
+        }
         t = last->time_ps;
     }
 
@@ -489,7 +509,12 @@ static void append(simlink_t *sl, int slot, uint64_t t)
     if (last->time_ps == t) {
         /* gleiche Zeit: letzten Eintrag ueberschreiben. Sicher, weil Leser nur
            Eintraege mit Zeit < ihrer Lesezeit nutzen und wir t noch nicht
-           als Fortschritt ueberschritten haben. */
+           als Fortschritt ueberschritten haben. Unterschied der ueberschriebene
+           Zustand vom Eintrag davor, geht ein Zwischenzustand verloren. */
+        if (head >= 2 && last->state != sl->cur_state[slot]
+            && last->state != p->ring[(head - 2) % SIMLINK_RING].state) {
+            warn(W_COLLAPSE, "Zwischenzustand mit gleichem Zeitstempel ueberschrieben", t, t);
+        }
         last->state = sl->cur_state[slot];
         last->pulses = sl->cur_pulses[slot];
         atomic_thread_fence(memory_order_seq_cst);
@@ -560,9 +585,14 @@ static sl_entry_t state_before(sl_part_t *p, uint64_t t)
     while (i > 0 && head - i < SIMLINK_RING) {
         e = p->ring[(i - 1) % SIMLINK_RING];
         if (e.time_ps < t) {
-            break;
+            return e;
         }
         i--;
+    }
+    /* kein Eintrag vor t mehr im Ring: der Ring ist ueberholt (ausser beim
+       allerersten Eintrag, der ab Beginn gilt) */
+    if (i > 0) {
+        warn(W_RING_READ, "Ring ueberholt, Zustand vor t fehlt", t, e.time_ps);
     }
     return e;
 }
@@ -726,6 +756,9 @@ int simlink_next_change(simlink_t *sl, int slot, uint64_t after, uint64_t upto,
             uint64_t t = p->ring[(head - 1 - k) % SIMLINK_RING].time_ps;
             if (t <= after) {
                 break;
+            }
+            if (k == SIMLINK_RING - 1 && head > SIMLINK_RING) {
+                warn(W_RING_SCAN, "Ring ueberholt, Aenderungen nach 'after' koennen fehlen", after, t);
             }
             if (t <= upto && t < best) {
                 best = t;

@@ -498,6 +498,7 @@ void parallel_set_eoi(uint8_t mask)
 #ifdef DEBUG
     uint8_t old = parallel_eoi;
 #endif
+    parallel_ext_presync(mask);
     parallel_eoi |= mask;
 
     PARALLEL_LINE_DEBUG_SET(eoi, EOI)
@@ -509,6 +510,7 @@ void parallel_clr_eoi(uint8_t mask)
 #ifdef DEBUG
     uint8_t old = parallel_eoi;
 #endif
+    parallel_ext_presync((uint8_t)~mask);
     parallel_eoi &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(eoi, EOI)
@@ -528,7 +530,10 @@ static void parallel_atn_signal(int st)
 
 void parallel_set_atn(uint8_t mask)
 {
-    uint8_t old = parallel_atn;
+    uint8_t old;
+
+    parallel_ext_presync(mask);
+    old = parallel_atn;
     parallel_atn |= mask;
 
     PARALLEL_LINE_DEBUG_SET(atn, ATN)
@@ -545,7 +550,10 @@ void parallel_set_atn(uint8_t mask)
 
 void parallel_clr_atn(uint8_t mask)
 {
-    uint8_t old = parallel_atn;
+    uint8_t old;
+
+    parallel_ext_presync((uint8_t)~mask);
+    old = parallel_atn;
     parallel_atn &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(atn, ATN)
@@ -595,7 +603,10 @@ void parallel_restore_clr_atn(uint8_t mask)
 
 void parallel_set_dav(uint8_t mask)
 {
-    uint8_t old = parallel_dav;
+    uint8_t old;
+
+    parallel_ext_presync(mask);
+    old = parallel_dav;
     parallel_dav |= mask;
 
     PARALLEL_LINE_DEBUG_SET(dav, DAV)
@@ -608,7 +619,10 @@ void parallel_set_dav(uint8_t mask)
 
 void parallel_clr_dav(uint8_t mask)
 {
-    uint8_t old = parallel_dav;
+    uint8_t old;
+
+    parallel_ext_presync((uint8_t)~mask);
+    old = parallel_dav;
     parallel_dav &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(dav, DAV)
@@ -621,7 +635,10 @@ void parallel_clr_dav(uint8_t mask)
 
 void parallel_set_nrfd(uint8_t mask)
 {
-    uint8_t old = parallel_nrfd;
+    uint8_t old;
+
+    parallel_ext_presync(mask);
+    old = parallel_nrfd;
     parallel_nrfd |= mask;
 
     PARALLEL_LINE_DEBUG_SET(nrfd, NRFD)
@@ -634,7 +651,10 @@ void parallel_set_nrfd(uint8_t mask)
 
 void parallel_clr_nrfd(uint8_t mask)
 {
-    uint8_t old = parallel_nrfd;
+    uint8_t old;
+
+    parallel_ext_presync((uint8_t)~mask);
+    old = parallel_nrfd;
     parallel_nrfd &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(nrfd, NRFD)
@@ -647,7 +667,10 @@ void parallel_clr_nrfd(uint8_t mask)
 
 void parallel_set_ndac(uint8_t mask)
 {
-    uint8_t old = parallel_ndac;
+    uint8_t old;
+
+    parallel_ext_presync(mask);
+    old = parallel_ndac;
     parallel_ndac |= mask;
 
     PARALLEL_LINE_DEBUG_SET(ndac, NDAC)
@@ -660,7 +683,10 @@ void parallel_set_ndac(uint8_t mask)
 
 void parallel_clr_ndac(uint8_t mask)
 {
-    uint8_t old = parallel_ndac;
+    uint8_t old;
+
+    parallel_ext_presync((uint8_t)~mask);
+    old = parallel_ndac;
     parallel_ndac &= mask;
 
     PARALLEL_LINE_DEBUG_CLR(ndac, NDAC)
@@ -711,6 +737,7 @@ void parallel_ext_set_bus(uint8_t b)
 
 void parallel_emu_set_bus(uint8_t b)
 {
+    parallel_ext_presync(PARALLEL_EMU);
     par_emu_bus = b;
     parallel_recalc_bus(PARALLEL_EMU);
 
@@ -719,6 +746,7 @@ void parallel_emu_set_bus(uint8_t b)
 
 void parallel_cpu_set_bus(uint8_t b)
 {
+    parallel_ext_presync(PARALLEL_CPU);
     par_cpu_bus = b;
     parallel_recalc_bus(PARALLEL_CPU);
 

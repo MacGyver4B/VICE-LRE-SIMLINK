@@ -180,6 +180,19 @@ static void sl_atexit(void)
     }
 }
 
+/* Vor einer Leitungsaenderung durch den PET (CPU oder Geraeteemulation):
+   den Bus bis jetzt abgleichen, solange der alte Zustand noch gilt. Sonst
+   veroeffentlicht der Abgleich in parallel_ext_notify() den neuen Zustand
+   schon mit den Zeitstempeln der dabei nachgeholten Aenderungen des externen
+   Teilnehmers, also bis zu simlink_step Takte zu frueh. */
+void parallel_ext_presync(uint8_t who)
+{
+    if (stopping || !sl || in_sync || !(who & (PARALLEL_CPU | PARALLEL_EMU))) {
+        return;
+    }
+    parallel_ext_sync(maincpu_clk);
+}
+
 /* Bei jeder Leitungsaenderung durch PET, Laufwerk oder Geraeteemulation */
 void parallel_ext_notify(uint8_t who)
 {
@@ -189,7 +202,8 @@ void parallel_ext_notify(uint8_t who)
         return;
     }
     if (!in_sync && (who & (PARALLEL_CPU | PARALLEL_EMU))) {
-        /* Aenderung durch den PET: Bus vorher bis jetzt abgleichen */
+        /* Aenderung durch den PET: Bus bis jetzt abgleichen (meist schon in
+           parallel_ext_presync() geschehen, dann ohne Wirkung) */
         parallel_ext_sync(maincpu_clk);
         if (!sl) {
             return;
@@ -443,6 +457,10 @@ static void sl_alarm_handler(CLOCK offset, void *data)
 }
 
 #else  /* !HAVE_SIMLINK */
+
+void parallel_ext_presync(uint8_t who)
+{
+}
 
 void parallel_ext_notify(uint8_t who)
 {

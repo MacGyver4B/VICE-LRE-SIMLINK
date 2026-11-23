@@ -67,6 +67,7 @@ extern uint8_t parallel_bus;       /* data lines */
 #define PARALLEL_EXT    0x40    /* externer Teilnehmer ueber simlink */
 
 /* simlink: externer Teilnehmer am IEEE-Bus (parallel-simlink.c) */
+void parallel_ext_presync(uint8_t who);         /* vor einer Leitungsaenderung (who: PARALLEL_*) */
 void parallel_ext_notify(uint8_t who);          /* Leitungen geaendert (who: PARALLEL_*) */
 void parallel_ext_reset(void);                  /* Reset des Rechners (IFC) */
 void parallel_ext_set_bus(uint8_t b);           /* Datenleitungen des externen Teilnehmers */

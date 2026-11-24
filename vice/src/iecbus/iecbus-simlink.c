@@ -467,6 +467,14 @@ void iecbus_ext_reset(void)
     } else {
         /* Rechnerseite bleibt beim externen Teilnehmer */
         ext_valid = 0;
+        /* cpu_reset setzt maincpu_clk auf 6: Zeitbasis nachfuehren, damit die
+           simlink-Zeit nicht zurueckspringt (siehe parallel-simlink.c) */
+        if (m2ps(maincpu_clk) < done_ps) {
+            base_ps += (int64_t)(done_ps - m2ps(maincpu_clk));
+            if (sl_alarm) {
+                alarm_set(sl_alarm, maincpu_clk + (CLOCK)simlink_step);
+            }
+        }
     }
 }
 

@@ -509,11 +509,14 @@ static void append(simlink_t *sl, int slot, uint64_t t)
     if (last->time_ps == t) {
         /* gleiche Zeit: letzten Eintrag ueberschreiben. Sicher, weil Leser nur
            Eintraege mit Zeit < ihrer Lesezeit nutzen und wir t noch nicht
-           als Fortschritt ueberschritten haben. Unterschied der ueberschriebene
-           Zustand vom Eintrag davor, geht ein Zwischenzustand verloren. */
+           als Fortschritt ueberschritten haben. Mehrere Leitungen, die im
+           selben Takt nacheinander gesetzt werden (VICE: ein VIA-Schreibzugriff
+           aendert NRFD und ATN), ergeben so einen gemeinsamen Wechsel; das ist
+           richtig. Verloren geht nur ein Puls der Laenge null: der neue
+           Zustand gleicht wieder dem vor dem Zeitpunkt t. */
         if (head >= 2 && last->state != sl->cur_state[slot]
-            && last->state != p->ring[(head - 2) % SIMLINK_RING].state) {
-            warn(W_COLLAPSE, "Zwischenzustand mit gleichem Zeitstempel ueberschrieben", t, t);
+            && sl->cur_state[slot] == p->ring[(head - 2) % SIMLINK_RING].state) {
+            warn(W_COLLAPSE, "Puls der Laenge null verworfen", t, t);
         }
         last->state = sl->cur_state[slot];
         last->pulses = sl->cur_pulses[slot];

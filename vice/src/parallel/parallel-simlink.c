@@ -436,6 +436,17 @@ void parallel_ext_reset(void)
     if (!sl) {
         return;
     }
+    /* Der Reset setzt maincpu_clk auf 6 zurueck (cpu_reset). Die simlink-Zeit
+       darf nicht rueckwaerts laufen, sonst wartet das Laufwerk, bis VICE
+       die alte Zeit wieder erreicht hat (so lange, wie der PET schon lief).
+       Daher die Basis so verschieben, dass es bei done_ps weitergeht, und
+       den Abgleich-Alarm auf die neue Taktzeit legen. */
+    if (m2ps(maincpu_clk) < done_ps) {
+        base_ps += (int64_t)(done_ps - m2ps(maincpu_clk));
+        if (sl_alarm) {
+            alarm_set(sl_alarm, maincpu_clk + (CLOCK)simlink_step);
+        }
+    }
     parallel_ext_sync(maincpu_clk);
     ifc_active = 1;
     ifc_end = maincpu_clk + 100;

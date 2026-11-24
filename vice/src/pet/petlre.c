@@ -158,7 +158,7 @@ static void card_store_ff(uint16_t addr, uint8_t value)
     bootkey_release();
 
     if (set != card_set) {
-        log_message(petlre_log, "card set %d -> %d (write $%02X to $%04X, PC=$%04X)",
+        log_verbose(petlre_log, "card set %d -> %d (write $%02X to $%04X, PC=$%04X)",
                     card_set, set, value, addr, (unsigned int)reg_pc);
         card_set = set;
         ramsel_changed();
@@ -270,7 +270,7 @@ static void lre_store(uint16_t addr, uint8_t value)
             g = 0;
         }
         if (g != lre_gmode || at != lre_attren) {
-            log_message(petlre_log, "register $%04X <- $%02X: GMODE %d -> %d, ATTREN %d -> %d (PC=$%04X)",
+            log_verbose(petlre_log, "register $%04X <- $%02X: GMODE %d -> %d, ATTREN %d -> %d (PC=$%04X)",
                         addr, value, lre_gmode, g, lre_attren, at, (unsigned int)reg_pc);
             lre_attren = at;
             if (g != lre_gmode) {
@@ -649,10 +649,10 @@ void petlre_reset(void)
     }
     /* /RES clears the set latch */
     if (card_set != 0) {
-        log_message(petlre_log, "reset: card set %d -> 0", card_set);
+        log_verbose(petlre_log, "reset: card set %d -> 0", card_set);
     }
     if (lre_gmode || lre_attren) {
-        log_message(petlre_log, "reset: GMODE %d -> 0, ATTREN %d -> 0", lre_gmode, lre_attren);
+        log_verbose(petlre_log, "reset: GMODE %d -> 0, ATTREN %d -> 0", lre_gmode, lre_attren);
     }
     card_set = 0;
     lre_gmode = lre_attren = 0;

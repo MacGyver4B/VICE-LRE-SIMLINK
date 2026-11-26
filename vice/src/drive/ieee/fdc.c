@@ -35,6 +35,7 @@
 
 #include "alarm.h"
 #include "attach.h"
+#include "cbmdos.h"
 #include "diskimage.h"
 #include "drive-check.h"
 #include "drive.h"
@@ -57,6 +58,21 @@
 /************************************************************************/
 
 #define NUM_FDC NUM_DISK_UNITS   /* dual disk drives */
+
+
+/* IPE code of disk_image_read_sector -> FDC job result */
+static int fdc_rc_from_ipe(int ipe)
+{
+    switch (ipe) {
+        case CBMDOS_IPE_READ_ERROR_BNF:  return FDC_ERR_HEADER;
+        case CBMDOS_IPE_READ_ERROR_SYNC: return FDC_ERR_SYNC;
+        case CBMDOS_IPE_READ_ERROR_DATA: return FDC_ERR_NOBLOCK;
+        case CBMDOS_IPE_READ_ERROR_CHK:  return FDC_ERR_DCHECK;
+        case CBMDOS_IPE_READ_ERROR_BCHK: return FDC_ERR_HCHECK;
+        case CBMDOS_IPE_DISK_ID_MISMATCH: return FDC_ERR_ID;
+        default: return FDC_ERR_OK;
+    }
+}
 
 static log_t fdc_log = LOG_DEFAULT;
 
@@ -553,8 +569,12 @@ static uint8_t fdc_do_job_(unsigned int fnum, int buf,
                               dadr.track, dadr.sector);
                     rc = FDC_ERR_DRIVE;
                 } else {
-                    memcpy(base, sector_data, 256);
-                    rc = FDC_ERR_OK;
+                    /* errors of the image (D64 error map, G64): report them
+                       like the FDC, soft errors still deliver the data */
+                    rc = fdc_rc_from_ipe(ret);
+                    if (rc == FDC_ERR_OK || rc == FDC_ERR_NOBLOCK || rc == FDC_ERR_DCHECK) {
+                        memcpy(base, sector_data, 256);
+                    }
                 }
             }
             break;
